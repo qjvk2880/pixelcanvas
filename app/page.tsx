@@ -11,8 +11,8 @@ const PixelCanvas = dynamic(() => import('./components/PixelCanvas'), {
 export default function Home() {
   return (
     <main className="h-screen w-screen overflow-hidden p-0 m-0">
-      {/* 픽셀 크기 지정 없이 캔버스를 화면에 꽉 차게 표시 */}
-      <PixelCanvas width={32} height={32} />
+      {/* 1000 x 1000 = 1,000,000개의 픽셀 */}
+      <PixelCanvas width={1000} height={1000} />
     </main>
   );
 }
