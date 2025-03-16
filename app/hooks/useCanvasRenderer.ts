@@ -147,6 +147,38 @@ export function useCanvasRenderer({
         ctx.fillStyle = animPixel.color;
         ctx.fill();
         ctx.globalAlpha = 1.0;
+        
+        // 닉네임 표시
+        if (animPixel.nickname && scale > 1) {
+          const textSize = Math.max(10, pixelSize * 0.5);
+          ctx.font = `${textSize}px Arial`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'bottom';
+          ctx.fillStyle = 'black';
+          
+          // 텍스트 배경
+          const nickname = animPixel.nickname;
+          const textWidth = ctx.measureText(nickname).width;
+          const padding = 4;
+          
+          ctx.globalAlpha = 0.7;
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(
+            screenX + pixelSize / 2 - textWidth / 2 - padding,
+            screenY - padding * 2,
+            textWidth + padding * 2,
+            textSize + padding
+          );
+          
+          // 텍스트 그리기
+          ctx.globalAlpha = 1.0;
+          ctx.fillStyle = '#000000';
+          ctx.fillText(
+            nickname,
+            screenX + pixelSize / 2,
+            screenY
+          );
+        }
       });
 
       // 애니메이션이 있을 때만 다음 프레임 요청

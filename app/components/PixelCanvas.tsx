@@ -8,6 +8,8 @@ import { useCanvasRenderer } from '../hooks/useCanvasRenderer';
 import Minimap from './pixel/Minimap';
 import ColorPalette from './pixel/ColorPalette';
 import ControlPanel from './pixel/ControlPanel';
+import NicknameModal from './pixel/NicknameModal';
+import UsersList from './pixel/UsersList';
 
 const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 }) => {
   // 상태 관리
@@ -17,6 +19,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
   const [showControls, setShowControls] = useState<boolean>(false);
   const [showMinimap, setShowMinimap] = useState<boolean>(true);
   const [userId] = useState<string>(`user-${Math.random().toString(36).substring(2, 9)}`);
+  const [nickname, setNickname] = useState<string>('');
   
   // 참조
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -26,10 +29,15 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
   const {
     pixels,
     animatedPixels,
+    users,
     isConnected,
     initialLoadComplete,
-    updatePixel
-  } = usePixelSocket({ userId });
+    updatePixel,
+    registerUser
+  } = usePixelSocket({ 
+    userId,
+    nickname: nickname || undefined 
+  });
   
   const {
     scale,
@@ -64,6 +72,28 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
     selectedColor,
     hoverCoord
   });
+  
+  // 닉네임 로드
+  useEffect(() => {
+    console.log('닉네임 로드 시도 중...');
+    if (typeof window !== 'undefined') {
+      // 디버깅용 초기화 코드
+      // localStorage.removeItem('pixel-art-nickname');
+      
+      const savedNickname = localStorage.getItem('pixel-art-nickname');
+      console.log('저장된 닉네임:', savedNickname);
+      
+      if (savedNickname) {
+        setNickname(savedNickname);
+      }
+    }
+  }, []);
+  
+  // 닉네임 제출 핸들러
+  const handleNicknameSubmit = useCallback((newNickname: string) => {
+    setNickname(newNickname);
+    registerUser(newNickname);
+  }, [registerUser]);
   
   // 픽셀맵 생성 (빠른 조회를 위한 해시맵)
   useEffect(() => {
@@ -201,6 +231,20 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
           scale={scale}
           onMinimapClick={handleMinimapClick}
           onClose={() => setShowMinimap(false)}
+        />
+      )}
+      
+      {/* 닉네임 모달 */}
+      <NicknameModal 
+        onSubmit={handleNicknameSubmit}
+        savedNickname={nickname}
+      />
+      
+      {/* 사용자 목록 */}
+      {isConnected && nickname && (
+        <UsersList 
+          users={users}
+          currentUserId={userId}
         />
       )}
     </div>

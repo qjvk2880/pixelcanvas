@@ -9,6 +9,15 @@ export interface Pixel {
 // 애니메이션 효과를 위한 인터페이스 
 export interface AnimatedPixel extends Pixel {
   timestamp: number;
+  nickname?: string;
+}
+
+// 사용자 정보 인터페이스
+export interface User {
+  id: string;
+  nickname: string;
+  color?: string;
+  lastActivity?: number;
 }
 
 // 픽셀 캔버스 속성 인터페이스

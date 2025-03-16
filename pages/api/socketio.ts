@@ -3,6 +3,7 @@ import { Server as SocketIOServer } from 'socket.io';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { connectToDatabase } from '../../lib/db/connection';
 import { Pixel } from '../../lib/models/Pixel';
+import { User } from '../../lib/models/User';
 
 // Socket.io 타입 정의
 export type NextApiResponseWithSocket = NextApiResponse & {
@@ -19,6 +20,9 @@ export const config = {
     bodyParser: false,
   },
 };
+
+// 온라인 사용자 목록 (메모리에 저장)
+const onlineUsers = new Map<string, { id: string; nickname: string; color?: string; lastActivity: number }>();
 
 // Socket.io 서버를 설정하지 않았다면 설정
 export default async function handler(
@@ -57,10 +61,55 @@ export default async function handler(
       // 초기 픽셀 데이터 로드 및 전송
       const initialPixels = await loadInitialPixels();
       socket.emit('initialPixels', initialPixels);
+      
+      // 사용자 목록 전송
+      socket.emit('usersList', Array.from(onlineUsers.values()));
+
+      // 사용자 등록
+      socket.on('registerUser', async (userData: { id: string; nickname: string; color?: string }) => {
+        try {
+          const { id, nickname, color } = userData;
+          
+          // 사용자 정보 저장
+          onlineUsers.set(socket.id, {
+            id,
+            nickname,
+            color: color || '#000000',
+            lastActivity: Date.now()
+          });
+          
+          // 사용자 정보 DB 업데이트
+          await User.findOneAndUpdate(
+            { userId: id },
+            { 
+              nickname,
+              color,
+              lastActivity: new Date(),
+              isOnline: true
+            },
+            { upsert: true, new: true }
+          );
+          
+          // 모든 클라이언트에게 업데이트된 사용자 목록 전송
+          io.emit('usersList', Array.from(onlineUsers.values()));
+          console.log(`사용자 등록됨: ${nickname} (${id})`);
+        } catch (error) {
+          console.error('사용자 등록 중 오류:', error);
+        }
+      });
 
       // 픽셀 업데이트 이벤트 처리
       socket.on('updatePixel', async (pixel: { x: number; y: number; color: string; userId?: string }) => {
         try {
+          // 사용자 활동 시간 업데이트
+          if (pixel.userId && onlineUsers.has(socket.id)) {
+            const user = onlineUsers.get(socket.id);
+            if (user) {
+              user.lastActivity = Date.now();
+              onlineUsers.set(socket.id, user);
+            }
+          }
+          
           // DB에 업데이트
           await updatePixelInDb(pixel);
           
@@ -71,8 +120,27 @@ export default async function handler(
         }
       });
 
-      socket.on('disconnect', () => {
+      socket.on('disconnect', async () => {
         console.log('클라이언트 연결 해제됨:', socket.id);
+        
+        // 사용자 목록에서 제거
+        if (onlineUsers.has(socket.id)) {
+          const user = onlineUsers.get(socket.id);
+          if (user) {
+            // DB에서 사용자 상태 업데이트
+            await User.findOneAndUpdate(
+              { userId: user.id },
+              { isOnline: false, lastActivity: new Date() }
+            );
+            
+            // 메모리에서 제거
+            onlineUsers.delete(socket.id);
+            
+            // 업데이트된 사용자 목록 브로드캐스트
+            io.emit('usersList', Array.from(onlineUsers.values()));
+            console.log(`사용자 오프라인: ${user.nickname}`);
+          }
+        }
       });
 
       socket.on('error', (error) => {
@@ -84,6 +152,28 @@ export default async function handler(
     io.engine.on('connection_error', (err) => {
       console.error('연결 오류:', err);
     });
+
+    // 비활성 사용자 정리 (5분마다)
+    setInterval(() => {
+      const now = Date.now();
+      const inactiveTimeout = 10 * 60 * 1000; // 10분
+      
+      for (const [socketId, user] of onlineUsers.entries()) {
+        if (now - user.lastActivity > inactiveTimeout) {
+          console.log(`비활성 사용자 제거: ${user.nickname}`);
+          onlineUsers.delete(socketId);
+          
+          // DB 업데이트
+          User.findOneAndUpdate(
+            { userId: user.id },
+            { isOnline: false, lastActivity: new Date() }
+          ).catch(err => console.error('비활성 사용자 DB 업데이트 오류:', err));
+        }
+      }
+      
+      // 업데이트된 사용자 목록 브로드캐스트
+      io.emit('usersList', Array.from(onlineUsers.values()));
+    }, 5 * 60 * 1000); // 5분마다 실행
 
     res.socket.server.io = io;
     console.log('Socket.io 서버가 성공적으로 시작되었습니다.');

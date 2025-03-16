@@ -2,28 +2,33 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { Pixel, AnimatedPixel } from '../types/pixel';
+import { Pixel, AnimatedPixel, User, COLOR_PALETTE } from '../types/pixel';
 
 interface UsePixelSocketProps {
   userId: string;
+  nickname?: string;
 }
 
 interface UsePixelSocketReturn {
   pixels: Pixel[];
   animatedPixels: AnimatedPixel[];
+  users: User[];
   isConnected: boolean;
   initialLoadComplete: boolean;
   updatePixel: (pixel: Pixel) => void;
+  registerUser: (nickname: string) => void;
 }
 
-export function usePixelSocket({ userId }: UsePixelSocketProps): UsePixelSocketReturn {
+export function usePixelSocket({ userId, nickname }: UsePixelSocketProps): UsePixelSocketReturn {
   const [pixels, setPixels] = useState<Pixel[]>([]);
   const [animatedPixels, setAnimatedPixels] = useState<AnimatedPixel[]>([]);
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [initialLoadComplete, setInitialLoadComplete] = useState<boolean>(false);
+  const [users, setUsers] = useState<User[]>([]);
   
   const socketRef = useRef<Socket | null>(null);
   const isConnectingRef = useRef<boolean>(false);
+  const registeredRef = useRef<boolean>(false);
   
   // 소켓 연결 설정
   useEffect(() => {
@@ -54,12 +59,22 @@ export function usePixelSocket({ userId }: UsePixelSocketProps): UsePixelSocketR
               console.log('소켓 연결됨:', socket.id);
               setIsConnected(true);
               isConnectingRef.current = false;
+              
+              // 저장된 닉네임이 있으면 자동 등록
+              if (nickname && !registeredRef.current) {
+                registerUserWithSocket(socket, userId, nickname);
+              }
             });
             
             socket.on('initialPixels', (initialPixels: Pixel[]) => {
               console.log('초기 픽셀 데이터 수신:', initialPixels.length);
               setPixels(initialPixels);
               setInitialLoadComplete(true);
+            });
+            
+            socket.on('usersList', (usersList: User[]) => {
+              console.log('사용자 목록 업데이트:', usersList.length);
+              setUsers(usersList);
             });
             
             socket.on('pixelUpdated', (updatedPixel: Pixel) => {
@@ -80,17 +95,29 @@ export function usePixelSocket({ userId }: UsePixelSocketProps): UsePixelSocketR
               
               // 다른 사용자가 그린 픽셀이면 애니메이션 추가
               if (updatedPixel.userId !== userId) {
+                // 해당 사용자의 닉네임 찾기
+                let userNickname = '익명';
+                const pixelUser = users.find(u => u.id === updatedPixel.userId);
+                if (pixelUser) {
+                  userNickname = pixelUser.nickname;
+                }
+                
                 const animPixel: AnimatedPixel = {
                   ...updatedPixel,
-                  timestamp: Date.now()
+                  timestamp: Date.now(),
+                  nickname: userNickname
                 };
                 
-                setAnimatedPixels(prev => [...prev, animPixel]);
+                setAnimatedPixels(prev => {
+                  // 동일한 위치의 이전 애니메이션 제거
+                  const filtered = prev.filter(p => !(p.x === updatedPixel.x && p.y === updatedPixel.y));
+                  return [...filtered, animPixel];
+                });
                 
                 // 애니메이션 종료 후 목록에서 제거
                 setTimeout(() => {
                   setAnimatedPixels(prev => 
-                    prev.filter(p => !(p.x === animPixel.x && p.y === animPixel.y))
+                    prev.filter(p => p !== animPixel)
                   );
                 }, 1000);
               }
@@ -99,6 +126,7 @@ export function usePixelSocket({ userId }: UsePixelSocketProps): UsePixelSocketR
             socket.on('disconnect', () => {
               console.log('소켓 연결 해제됨');
               setIsConnected(false);
+              registeredRef.current = false;
             });
             
             socket.io.on('error', (error) => {
@@ -123,8 +151,33 @@ export function usePixelSocket({ userId }: UsePixelSocketProps): UsePixelSocketR
         socketRef.current = null;
       }
       isConnectingRef.current = false;
+      registeredRef.current = false;
     };
-  }, [userId]);
+  }, [userId, nickname]);
+  
+  // 사용자 등록 함수
+  const registerUser = useCallback((newNickname: string) => {
+    if (!socketRef.current || !isConnected) {
+      console.warn('소켓 연결이 되어있지 않아 사용자 등록을 할 수 없습니다.');
+      return;
+    }
+    
+    registerUserWithSocket(socketRef.current, userId, newNickname);
+  }, [userId, isConnected]);
+  
+  // 사용자 등록 헬퍼 함수
+  const registerUserWithSocket = (socket: Socket, userId: string, nickname: string) => {
+    const randomColor = COLOR_PALETTE[Math.floor(Math.random() * COLOR_PALETTE.length)];
+    
+    socket.emit('registerUser', {
+      id: userId,
+      nickname: nickname,
+      color: randomColor
+    });
+    
+    registeredRef.current = true;
+    console.log(`사용자 등록: ${nickname} (${userId})`);
+  };
   
   // 픽셀 업데이트 함수
   const updatePixel = useCallback((pixel: Pixel) => {
@@ -148,7 +201,8 @@ export function usePixelSocket({ userId }: UsePixelSocketProps): UsePixelSocketR
     // 애니메이션 효과 추가
     const animPixel: AnimatedPixel = {
       ...updatedPixel,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      nickname: nickname || '나'
     };
     
     setAnimatedPixels(prev => {
@@ -168,13 +222,15 @@ export function usePixelSocket({ userId }: UsePixelSocketProps): UsePixelSocketR
     if (socketRef.current) {
       socketRef.current.emit('updatePixel', updatedPixel);
     }
-  }, [userId]);
+  }, [userId, nickname]);
   
   return {
     pixels,
     animatedPixels,
+    users,
     isConnected,
     initialLoadComplete,
-    updatePixel
+    updatePixel,
+    registerUser
   };
 } 
