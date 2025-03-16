@@ -36,7 +36,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
   const [pixels, setPixels] = useState<Pixel[]>([]);
   const [pixelMap, setPixelMap] = useState<Map<string, string>>(new Map());
   const [selectedColor, setSelectedColor] = useState<string>('#000000');
-  const [scale, setScale] = useState<number>(4);
+  const [scale, setScale] = useState<number>(1);
   const [position, setPosition] = useState<{ x: number; y: number }>({ x: -(width / 2), y: -(height / 2) });
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [lastMousePos, setLastMousePos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -44,7 +44,6 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
   const [hoverCoord, setHoverCoord] = useState<{ x: number, y: number } | null>(null);
   const [showMinimap, setShowMinimap] = useState<boolean>(true);
   const [animatedPixels, setAnimatedPixels] = useState<AnimatedPixel[]>([]);
-  const [userId] = useState<string>(`user-${Math.random().toString(36).substring(2, 9)}`); // 랜덤 사용자 ID 생성
   
   // 참조
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -135,44 +134,6 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
       }
     }
     
-    // 애니메이션 효과 그리기
-    const currentTime = Date.now();
-    animatedPixels.forEach(animPixel => {
-      const elapsedTime = currentTime - animPixel.timestamp;
-      const animDuration = 1000; // 1초 동안 애니메이션 지속
-      
-      if (elapsedTime < animDuration) {
-        const x = animPixel.x;
-        const y = animPixel.y;
-        
-        // 화면 좌표 계산
-        const screenX = offsetX + x * pixelSize;
-        const screenY = offsetY + y * pixelSize;
-        
-        // 애니메이션 진행률 (0~1)
-        const progress = elapsedTime / animDuration;
-        
-        // 물결 효과 크기 (시간에 따라 감소)
-        const waveSize = (1 - progress) * pixelSize * 1.5;
-        
-        // 반투명한 원형 파동 그리기
-        ctx.globalAlpha = 0.7 * (1 - progress);
-        ctx.beginPath();
-        ctx.arc(
-          screenX + pixelSize / 2, 
-          screenY + pixelSize / 2, 
-          waveSize, 
-          0, 
-          Math.PI * 2
-        );
-        ctx.fillStyle = animPixel.color;
-        ctx.fill();
-        
-        // 투명도 원상복구
-        ctx.globalAlpha = 1.0;
-      }
-    });
-    
     // 호버 효과
     if (hoverCoord && scale > 0.3) {
       const { x, y } = hoverCoord;
@@ -189,7 +150,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
         }
       }
     }
-  }, [width, height, position, scale, pixelMap, hoverCoord, selectedColor, animatedPixels]);
+  }, [width, height, position, scale, pixelMap, hoverCoord, selectedColor]);
   
   // 그리기 함수 실행 (애니메이션 프레임 없이)
   useEffect(() => {
@@ -243,8 +204,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
               setPixels(initialPixels);
             });
             
-            socket.on('pixelUpdated', (updatedPixel: Pixel & { userId?: string }) => {
-              // 픽셀 업데이트
+            socket.on('pixelUpdated', (updatedPixel: Pixel) => {
               setPixels(prevPixels => {
                 const pixelIndex = prevPixels.findIndex(
                   p => p.x === updatedPixel.x && p.y === updatedPixel.y
@@ -258,23 +218,6 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
                   return [...prevPixels, updatedPixel];
                 }
               });
-              
-              // 다른 사용자가 그린 픽셀이면 애니메이션 추가
-              if (updatedPixel.userId !== userId) {
-                const animPixel: AnimatedPixel = {
-                  ...updatedPixel,
-                  timestamp: Date.now()
-                };
-                
-                setAnimatedPixels(prev => [...prev, animPixel]);
-                
-                // 애니메이션 종료 후 목록에서 제거
-                setTimeout(() => {
-                  setAnimatedPixels(prev => 
-                    prev.filter(p => !(p.x === animPixel.x && p.y === animPixel.y))
-                  );
-                }, 1000);
-              }
             });
             
             socket.on('disconnect', () => {
@@ -304,33 +247,12 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
       }
       isConnectingRef.current = false;
     };
-  }, [userId]);
+  }, []);
   
-  // 캔버스 초기화 시 중앙으로 위치 조정 및 적절한 확대 수준 설정
+  // 캔버스 초기화 시 중앙으로 위치 조정
   useEffect(() => {
     // 캔버스 초기화 후 그리드 중앙이 화면 중앙에 오도록 position 설정
     setPosition({ x: -(width / 2), y: -(height / 2) });
-    
-    // 화면 크기에 따라 적절한 초기 확대 수준 계산
-    const updateInitialScale = () => {
-      if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
-        const screenSize = Math.min(rect.width, rect.height);
-        
-        // 화면에 최소 20개의 픽셀이 보이도록 초기 확대 수준 계산
-        const idealPixelCount = 20;
-        const idealScale = (screenSize / (width > height ? width : height)) * (idealPixelCount / 2);
-        
-        // 최소 3, 최대 6 사이의 적절한 확대 수준으로 제한
-        const targetScale = Math.max(3, Math.min(6, idealScale));
-        setScale(targetScale);
-      } else {
-        // 컨테이너 참조가 없는 경우 기본값 사용
-        setScale(4);
-      }
-    };
-    
-    updateInitialScale();
     console.log('캔버스 초기화: 중앙으로 위치 조정됨', { width, height });
   }, [width, height]);
   
@@ -370,7 +292,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
       const { x, y } = coords;
       
       if (x >= 0 && x < width && y >= 0 && y < height) {
-        const updatedPixel = { x, y, color: selectedColor, userId };
+        const updatedPixel = { x, y, color: selectedColor };
         
         // 낙관적 UI 업데이트
         setPixels(prevPixels => {
@@ -385,24 +307,6 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
           }
         });
         
-        // 애니메이션 효과 추가
-        const animPixel: AnimatedPixel = {
-          x, 
-          y, 
-          color: selectedColor,
-          timestamp: Date.now(),
-          userId
-        };
-        
-        setAnimatedPixels(prev => [...prev, animPixel]);
-        
-        // 애니메이션 종료 후 목록에서 제거
-        setTimeout(() => {
-          setAnimatedPixels(prev => 
-            prev.filter(p => !(p.x === x && p.y === y))
-          );
-        }, 1000);
-        
         // 서버로 업데이트 전송
         if (socketRef.current) {
           socketRef.current.emit('updatePixel', updatedPixel);
@@ -413,7 +317,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
       setIsDragging(true);
       setLastMousePos({ x: e.clientX, y: e.clientY });
     }
-  }, [getGridCoordinates, selectedColor, width, height, userId]);
+  }, [getGridCoordinates, selectedColor, width, height]);
   
   const handleMouseMove = useCallback((e: MouseEvent<HTMLCanvasElement>) => {
     // 호버 좌표 업데이트
@@ -442,171 +346,46 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
   const handleWheel = useCallback((e: WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     
+    // 마우스 위치에서의 확대/축소
+    const { clientX, clientY } = e;
+    const coords = getGridCoordinates(clientX, clientY);
+    
     // 확대/축소 계수
     const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
     const newScale = Math.max(0.1, Math.min(50, scale * zoomFactor));
     
-    // 화면 중앙을 기준으로 확대/축소
+    // 마우스 위치를 기준으로 확대/축소
     if (scale !== newScale) {
-      // 스케일 변화에 따른 위치 조정 (화면 중앙 기준)
-      const scaleRatio = newScale / scale;
+      const zoomRatio = newScale / scale;
       
-      // 중앙을 기준으로 확대/축소하면 position 값을 조정해야 함
-      // 확대 시: 중앙에서 position까지의 거리가 길어짐
-      // 축소 시: 중앙에서 position까지의 거리가 짧아짐
-      setPosition({
-        x: position.x * scaleRatio,
-        y: position.y * scaleRatio
-      });
+      // 마우스 위치를 기준으로 오프셋 조정
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (rect) {
+        const mouseX = clientX - rect.left;
+        const mouseY = clientY - rect.top;
+        
+        const centerX = rect.width / 2;
+        const centerY = rect.height / 2;
+        
+        // 마우스 위치에서의 상대 위치
+        const relX = mouseX - centerX - position.x * scale;
+        const relY = mouseY - centerY - position.y * scale;
+        
+        // 새 위치 계산
+        setPosition({
+          x: position.x - relX * (1 / scale - 1 / newScale),
+          y: position.y - relY * (1 / scale - 1 / newScale)
+        });
+      }
       
       setScale(newScale);
     }
-  }, [scale, position]);
+  }, [scale, position, getGridCoordinates]);
   
   // 컨텍스트 메뉴 방지
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
   }, []);
-  
-  // 효율적인 렌더링을 위해 미니맵에 표시할 픽셀 제한
-  const visiblePixels = useMemo(() => {
-    // 픽셀 수가 많을 경우 샘플링하여 표시
-    if (pixels.length > 2000) {
-      const sampleRate = Math.ceil(pixels.length / 2000);
-      return pixels.filter((_, index) => index % sampleRate === 0);
-    }
-    return pixels;
-  }, [pixels]);
-  
-  // 미니맵 렌더링 함수
-  const renderMinimap = useCallback(() => {
-    if (!showMinimap) return null;
-    
-    // 미니맵 크기 설정
-    const minimapSize = 150;
-    const minimapPixelSize = minimapSize / Math.max(width, height);
-    
-    // 뷰포트 계산
-    const canvas = canvasRef.current;
-    if (!canvas) return null;
-    
-    const rect = canvas.getBoundingClientRect();
-    const basePixelSize = Math.min(rect.width / width, rect.height / height) * 0.9;
-    const pixelSize = basePixelSize * scale;
-    
-    // 화면에 보이는 픽셀 범위 계산
-    const centerX = rect.width / 2;
-    const centerY = rect.height / 2;
-    const offsetX = centerX + position.x * scale;
-    const offsetY = centerY + position.y * scale;
-    
-    const startX = Math.floor((0 - offsetX) / pixelSize);
-    const startY = Math.floor((0 - offsetY) / pixelSize);
-    const endX = Math.ceil((rect.width - offsetX) / pixelSize);
-    const endY = Math.ceil((rect.height - offsetY) / pixelSize);
-    
-    // 뷰포트 영역 표시 (화면에 보이는 영역)
-    const viewportX = Math.max(0, startX) * minimapPixelSize;
-    const viewportY = Math.max(0, startY) * minimapPixelSize;
-    const viewportWidth = Math.min(width, endX) * minimapPixelSize - viewportX;
-    const viewportHeight = Math.min(height, endY) * minimapPixelSize - viewportY;
-    
-    // 미니맵 클릭 이벤트 처리 (해당 위치로 이동)
-    const handleMinimapClick = (e: React.MouseEvent<HTMLDivElement>) => {
-      const minimapRect = e.currentTarget.getBoundingClientRect();
-      const clickX = e.clientX - minimapRect.left;
-      const clickY = e.clientY - minimapRect.top;
-      
-      // 클릭한 위치의 그리드 좌표 계산
-      const gridX = Math.floor(clickX / minimapPixelSize);
-      const gridY = Math.floor(clickY / minimapPixelSize);
-      
-      // 해당 위치로 화면 중앙 이동 (부드러운 전환을 위해 점진적으로 이동)
-      const targetPosition = {
-        x: -gridX + (rect.width / pixelSize / 2),
-        y: -gridY + (rect.height / pixelSize / 2)
-      };
-      
-      // 부드러운 이동을 위한 애니메이션
-      const startPosition = { ...position };
-      const startTime = performance.now();
-      const duration = 300; // 애니메이션 시간 (ms)
-      
-      const animatePosition = (currentTime: number) => {
-        const elapsed = currentTime - startTime;
-        const progress = Math.min(elapsed / duration, 1);
-        // easeOutCubic 이징 함수
-        const easeProgress = 1 - Math.pow(1 - progress, 3);
-        
-        if (progress < 1) {
-          setPosition({
-            x: startPosition.x + (targetPosition.x - startPosition.x) * easeProgress,
-            y: startPosition.y + (targetPosition.y - startPosition.y) * easeProgress
-          });
-          requestAnimationFrame(animatePosition);
-        } else {
-          setPosition(targetPosition);
-        }
-      };
-      
-      requestAnimationFrame(animatePosition);
-    };
-    
-    return (
-      <div 
-        className="fixed bottom-24 right-4 bg-white rounded-lg shadow-lg overflow-hidden z-10 border border-gray-300" 
-        style={{ width: minimapSize, height: minimapSize }}
-      >
-        {/* 미니맵 배경 */}
-        <div 
-          className="relative w-full h-full bg-gray-100"
-          onClick={handleMinimapClick}
-        >
-          {/* 색칠된 픽셀들 표시 */}
-          {visiblePixels.map(pixel => (
-            <div
-              key={`minimap-${pixel.x}-${pixel.y}`}
-              className="absolute"
-              style={{
-                left: `${pixel.x * minimapPixelSize}px`,
-                top: `${pixel.y * minimapPixelSize}px`,
-                width: `${minimapPixelSize}px`,
-                height: `${minimapPixelSize}px`,
-                backgroundColor: pixel.color,
-                transform: minimapPixelSize < 0.5 ? 'scale(2)' : 'none',
-                zIndex: 1
-              }}
-            />
-          ))}
-          
-          {/* 뷰포트 영역 표시 - 부드러운 트랜지션 적용 */}
-          <div
-            className="absolute border-2 border-yellow-400 pointer-events-none"
-            style={{
-              left: `${viewportX}px`,
-              top: `${viewportY}px`,
-              width: `${viewportWidth}px`,
-              height: `${viewportHeight}px`,
-              transition: 'all 0.15s ease-out',
-              zIndex: 2,
-              boxShadow: '0 0 0 1px rgba(255, 255, 255, 0.3)'
-            }}
-          />
-        </div>
-        
-        {/* 미니맵 토글 버튼 */}
-        <div 
-          className="absolute top-1 right-1 w-5 h-5 bg-white bg-opacity-70 rounded-full flex items-center justify-center cursor-pointer text-xs shadow-sm"
-          onClick={(e) => {
-            e.stopPropagation();
-            setShowMinimap(prev => !prev);
-          }}
-        >
-          ✕
-        </div>
-      </div>
-    );
-  }, [showMinimap, width, height, position, scale, visiblePixels]);
   
   // 키보드 이벤트 처리
   useEffect(() => {
@@ -694,7 +473,6 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
           <p>좌클릭: 픽셀 색칠</p>
           <p>우클릭 + 드래그: 화면 이동</p>
           <p>H: 도움말 표시/숨김</p>
-          <p>M: 미니맵 표시/숨김</p>
           <p className="mt-1 text-gray-500">배율: {Math.round(scale * 100)}%</p>
         </div>
       )}
@@ -702,7 +480,31 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
       {coordinateIndicator}
       
       {/* 미니맵 */}
-      {renderMinimap()}
+      <div 
+        className="fixed bottom-24 right-4 bg-white rounded-lg shadow-lg overflow-hidden z-10 border border-gray-300" 
+        style={{ width: 150, height: 150, display: showMinimap ? 'block' : 'none' }}
+      >
+        {/* 미니맵 배경 */}
+        <div 
+          className="relative w-full h-full bg-gray-100"
+        >
+          {/* 미니맵 토글 버튼 */}
+          <div 
+            className="absolute top-1 right-1 w-5 h-5 bg-white bg-opacity-70 rounded-full flex items-center justify-center cursor-pointer text-xs shadow-sm"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowMinimap(false);
+            }}
+          >
+            ✕
+          </div>
+        </div>
+      </div>
+      
+      {/* 디버깅용 미니맵 표시 상태 */}
+      <div className="fixed top-4 left-4 bg-white bg-opacity-70 py-1 px-2 rounded-lg text-xs">
+        미니맵 상태: {showMinimap ? '표시' : '숨김'}
+      </div>
     </div>
   );
 };
