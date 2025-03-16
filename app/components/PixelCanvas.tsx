@@ -27,7 +27,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
   const [pixels, setPixels] = useState<Pixel[]>([]);
   const [pixelMap, setPixelMap] = useState<Map<string, string>>(new Map());
   const [selectedColor, setSelectedColor] = useState<string>('#000000');
-  const [scale, setScale] = useState<number>(1);
+  const [scale, setScale] = useState<number>(4);
   const [position, setPosition] = useState<{ x: number; y: number }>({ x: -(width / 2), y: -(height / 2) });
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [lastMousePos, setLastMousePos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -238,10 +238,31 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
     };
   }, []);
   
-  // 캔버스 초기화 시 중앙으로 위치 조정
+  // 캔버스 초기화 시 중앙으로 위치 조정 및 적절한 확대 수준 설정
   useEffect(() => {
     // 캔버스 초기화 후 그리드 중앙이 화면 중앙에 오도록 position 설정
     setPosition({ x: -(width / 2), y: -(height / 2) });
+    
+    // 화면 크기에 따라 적절한 초기 확대 수준 계산
+    const updateInitialScale = () => {
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        const screenSize = Math.min(rect.width, rect.height);
+        
+        // 화면에 최소 20개의 픽셀이 보이도록 초기 확대 수준 계산
+        const idealPixelCount = 20;
+        const idealScale = (screenSize / (width > height ? width : height)) * (idealPixelCount / 2);
+        
+        // 최소 3, 최대 6 사이의 적절한 확대 수준으로 제한
+        const targetScale = Math.max(3, Math.min(6, idealScale));
+        setScale(targetScale);
+      } else {
+        // 컨테이너 참조가 없는 경우 기본값 사용
+        setScale(4);
+      }
+    };
+    
+    updateInitialScale();
     console.log('캔버스 초기화: 중앙으로 위치 조정됨', { width, height });
   }, [width, height]);
   
