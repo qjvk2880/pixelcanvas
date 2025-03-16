@@ -77,7 +77,7 @@ export function usePixelSocket({ userId, nickname }: UsePixelSocketProps): UsePi
               setUsers(usersList);
             });
             
-            socket.on('pixelUpdated', (updatedPixel: Pixel) => {
+            socket.on('pixelUpdated', (updatedPixel: Pixel & { nickname?: string }) => {
               // 픽셀 업데이트
               setPixels(prevPixels => {
                 const pixelIndex = prevPixels.findIndex(
@@ -95,11 +95,15 @@ export function usePixelSocket({ userId, nickname }: UsePixelSocketProps): UsePi
               
               // 다른 사용자가 그린 픽셀이면 애니메이션 추가
               if (updatedPixel.userId !== userId) {
-                // 해당 사용자의 닉네임 찾기
-                let userNickname = '익명';
-                const pixelUser = users.find(u => u.id === updatedPixel.userId);
-                if (pixelUser) {
-                  userNickname = pixelUser.nickname;
+                // 서버에서 전달한 닉네임 정보 사용 또는 기본값 설정
+                let userNickname = updatedPixel.nickname || '익명';
+                
+                // 직접 닉네임 정보가 없는 경우에만 사용자 목록에서 검색
+                if (!userNickname || userNickname === '익명') {
+                  const pixelUser = users.find(u => u.id === updatedPixel.userId);
+                  if (pixelUser) {
+                    userNickname = pixelUser.nickname;
+                  }
                 }
                 
                 const animPixel: AnimatedPixel = {
@@ -181,7 +185,12 @@ export function usePixelSocket({ userId, nickname }: UsePixelSocketProps): UsePi
   
   // 픽셀 업데이트 함수
   const updatePixel = useCallback((pixel: Pixel) => {
-    const updatedPixel = { ...pixel, userId };
+    const updatedPixel = { 
+      ...pixel, 
+      userId,
+      // @ts-ignore - 확장 속성 추가
+      nickname: nickname || '나'
+    };
     
     // 낙관적 UI 업데이트
     setPixels(prevPixels => {

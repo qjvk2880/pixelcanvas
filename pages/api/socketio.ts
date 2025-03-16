@@ -113,8 +113,24 @@ export default async function handler(
           // DB에 업데이트
           await updatePixelInDb(pixel);
           
+          // 닉네임 정보 추가
+          const pixelWithNickname = { ...pixel };
+          if (pixel.userId) {
+            // 해당 사용자의 userId로 Socket ID 찾기
+            const userSocketId = [...onlineUsers.entries()]
+              .find(([_, user]) => user.id === pixel.userId)?.[0];
+              
+            if (userSocketId && onlineUsers.has(userSocketId)) {
+              const userData = onlineUsers.get(userSocketId);
+              if (userData) {
+                // @ts-ignore - 확장 속성 추가
+                pixelWithNickname.nickname = userData.nickname;
+              }
+            }
+          }
+          
           // 모든 클라이언트에게 변경 사항 브로드캐스트
-          io.emit('pixelUpdated', pixel);
+          io.emit('pixelUpdated', pixelWithNickname);
         } catch (error) {
           console.error('픽셀 업데이트 중 오류:', error);
         }
