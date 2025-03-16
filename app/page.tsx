@@ -11,8 +11,8 @@ const PixelCanvas = dynamic(() => import('./components/PixelCanvas'), {
 export default function Home() {
   return (
     <main className="h-screen w-screen overflow-hidden p-0 m-0">
-      {/* 320 x 320 = 102,400개의 픽셀 */}
-      <PixelCanvas width={320} height={320} pixelSize={2} />
+      {/* 32 x 32 = 1,024개의 픽셀 */}
+      <PixelCanvas width={32} height={32} pixelSize={16} />
     </main>
   );
 }
