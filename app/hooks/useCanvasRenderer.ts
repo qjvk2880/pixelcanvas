@@ -32,7 +32,7 @@ export function useCanvasRenderer({
   selectedColor,
   hoverCoord
 }: UseCanvasRendererProps) {
-  const animationFrameRef = useRef<number>();
+  const animationFrameRef = useRef<number | undefined>(undefined);
   const lastDrawTimeRef = useRef<number>(0);
 
   // 캔버스 그리기 함수
