@@ -22,6 +22,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
   const [nickname, setNickname] = useState<string>('');
   const [isPainting, setIsPainting] = useState<boolean>(false);
   const [lastPaintedPixel, setLastPaintedPixel] = useState<{x: number, y: number} | null>(null);
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
   
   // 참조
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -121,6 +122,12 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
   // 키보드 이벤트 처리
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Shift + A : 관리자 모드 토글 (비밀)
+      if (e.shiftKey && e.code === 'KeyA') {
+        setIsAdmin(prev => !prev);
+        console.log('관리자 모드:', !isAdmin);
+      }
+      
       // H 키를 누르면 도움말 표시/숨김
       if (e.code === 'KeyH') {
         setShowControls(prev => !prev);
@@ -136,7 +143,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, []);
+  }, [isAdmin]);
   
   // 마우스 이벤트 핸들러
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -251,6 +258,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
         scale={scale}
         showMinimap={showMinimap}
         hoverCoord={hoverCoord}
+        isAdmin={isAdmin}
       />
       
       {/* 미니맵 */}

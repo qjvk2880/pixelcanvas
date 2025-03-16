@@ -2,6 +2,39 @@
 
 여러 사용자가 함께 그릴 수 있는 실시간 픽셀 아트 협업 서비스입니다. Socket.io를 이용해 실시간으로 모든 사용자의 변경사항이 동기화됩니다.
 
+## Vercel 배포 시 실시간 연동 문제
+
+현재 Vercel 서버리스 환경에서는 Socket.io가 지속적인 연결을 유지하기 어려워 실시간 연동에 문제가 있습니다. 다음 해결책을 고려해보세요:
+
+### 방법 1: AWS EC2 사용하기 (권장)
+
+AWS EC2는 지속적으로 실행되는 가상 서버를 제공하므로 Socket.io의 WebSocket 연결을 안정적으로 유지할 수 있습니다:
+
+1. EC2 인스턴스 생성 (t2.micro는 프리 티어 무료)
+2. Ubuntu 서버 설치 후 Node.js, PM2, Nginx 설정
+3. 애플리케이션 배포 및 실행
+
+자세한 배포 가이드: [AWS-EC2-GUIDE.md](./AWS-EC2-GUIDE.md)
+
+### 방법 2: Pusher 사용하기
+
+[Pusher](https://pusher.com/)는 서버리스 환경에 최적화된 실시간 서비스입니다:
+
+1. Pusher 계정 생성 및 앱 만들기
+2. 다음 명령어로 Pusher 설치:
+   ```bash
+   npm install pusher pusher-js
+   ```
+3. Socket.io 코드를 Pusher 코드로 교체
+
+### 방법 3: Railway 또는 Render로 배포
+
+Railway나 Render와 같은 컨테이너 기반 호스팅 서비스를 사용하면 Socket.io를 그대로 유지할 수 있습니다.
+
+### 방법 4: 로컬 개발 서버 사용
+
+개발 목적이라면 로컬에서 `npm run dev`로 실행하는 것이 가장 간단합니다.
+
 ## 프로젝트 기능
 
 - 1000x1000 픽셀 캔버스
