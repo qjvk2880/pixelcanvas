@@ -28,7 +28,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
   const [pixelMap, setPixelMap] = useState<Map<string, string>>(new Map());
   const [selectedColor, setSelectedColor] = useState<string>('#000000');
   const [scale, setScale] = useState<number>(1);
-  const [position, setPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [position, setPosition] = useState<{ x: number; y: number }>({ x: -(width / 2), y: -(height / 2) });
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [lastMousePos, setLastMousePos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [showControls, setShowControls] = useState<boolean>(false);
@@ -39,7 +39,6 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
   const containerRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const isConnectingRef = useRef<boolean>(false);
-  const requestRef = useRef<number | null>(null);
   
   // 픽셀맵 생성 (빠른 조회를 위한 해시맵)
   useEffect(() => {
@@ -49,51 +48,61 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
     });
     setPixelMap(map);
   }, [pixels]);
-  
-  // 캔버스 그리기 함수
-  const draw = useCallback(() => {
+
+  // 캔버스 초기화 및 그리기 함수
+  const drawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     
-    const containerWidth = canvas.width;
-    const containerHeight = canvas.height;
+    // 캔버스 크기 설정 및 초기화
+    const rect = containerRef.current?.getBoundingClientRect() || canvas.getBoundingClientRect();
+    const cssWidth = rect.width;
+    const cssHeight = rect.height;
     
-    // 기본 픽셀 크기 계산
-    const basePixelSize = Math.min(containerWidth / width, containerHeight / height);
+    // 고해상도 디스플레이 지원
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = cssWidth * dpr;
+    canvas.height = cssHeight * dpr;
+    canvas.style.width = `${cssWidth}px`;
+    canvas.style.height = `${cssHeight}px`;
     
-    // 캔버스 초기화
+    // 컨텍스트 스케일 설정
+    ctx.setTransform(1, 0, 0, 1, 0, 0); // 변환 초기화
+    ctx.scale(dpr, dpr);
+    
+    // 배경 그리기
     ctx.fillStyle = '#F8F8F8';
-    ctx.fillRect(0, 0, containerWidth, containerHeight);
+    ctx.fillRect(0, 0, cssWidth, cssHeight);
     
-    // 중앙 위치
-    const centerX = containerWidth / 2;
-    const centerY = containerHeight / 2;
+    // 픽셀 크기 계산
+    const basePixelSize = Math.min(cssWidth / width, cssHeight / height) * 0.9;
+    const pixelSize = basePixelSize * scale;
     
-    // 격자 그리기
-    const effectivePixelSize = basePixelSize * scale;
+    // 중앙점 및 오프셋 계산
+    const centerX = cssWidth / 2;
+    const centerY = cssHeight / 2;
     const offsetX = centerX + position.x * scale;
     const offsetY = centerY + position.y * scale;
     
-    // 화면에 표시될 픽셀 범위 계산
-    const startX = Math.floor((0 - offsetX) / effectivePixelSize);
-    const startY = Math.floor((0 - offsetY) / effectivePixelSize);
-    const endX = Math.ceil((containerWidth - offsetX) / effectivePixelSize);
-    const endY = Math.ceil((containerHeight - offsetY) / effectivePixelSize);
+    // 표시 영역 계산
+    const startX = Math.floor((0 - offsetX) / pixelSize);
+    const startY = Math.floor((0 - offsetY) / pixelSize);
+    const endX = Math.ceil((cssWidth - offsetX) / pixelSize);
+    const endY = Math.ceil((cssHeight - offsetY) / pixelSize);
     
-    // 격자 표시 (확대 시에만)
-    if (scale > 3) {
+    // 격자 그리기 (확대 수준이 높을 때만)
+    if (scale > 2) {
       ctx.strokeStyle = '#EEEEEE';
       ctx.lineWidth = 0.5;
       
       for (let x = Math.max(0, startX); x < Math.min(width, endX); x++) {
         for (let y = Math.max(0, startY); y < Math.min(height, endY); y++) {
-          const pixelX = Math.round(offsetX + x * effectivePixelSize);
-          const pixelY = Math.round(offsetY + y * effectivePixelSize);
-          
-          ctx.strokeRect(pixelX, pixelY, effectivePixelSize, effectivePixelSize);
+          const screenX = offsetX + x * pixelSize;
+          const screenY = offsetY + y * pixelSize;
+          ctx.strokeRect(screenX, screenY, pixelSize, pixelSize);
         }
       }
     }
@@ -101,80 +110,53 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
     // 색칠된 픽셀 그리기
     for (let x = Math.max(0, startX); x < Math.min(width, endX); x++) {
       for (let y = Math.max(0, startY); y < Math.min(height, endY); y++) {
-        const color = pixelMap.get(`${x},${y}`);
+        const key = `${x},${y}`;
+        const color = pixelMap.get(key);
         
         if (color) {
-          const pixelX = Math.round(offsetX + x * effectivePixelSize);
-          const pixelY = Math.round(offsetY + y * effectivePixelSize);
+          const screenX = offsetX + x * pixelSize;
+          const screenY = offsetY + y * pixelSize;
           
           ctx.fillStyle = color;
-          ctx.fillRect(pixelX, pixelY, effectivePixelSize, effectivePixelSize);
+          ctx.fillRect(screenX, screenY, pixelSize, pixelSize);
         }
       }
     }
     
-    // 현재 마우스 오버 중인 픽셀에 미리보기 효과
-    if (hoverCoord && scale > 0.5) {
+    // 호버 효과
+    if (hoverCoord && scale > 0.3) {
       const { x, y } = hoverCoord;
       if (x >= 0 && x < width && y >= 0 && y < height) {
-        const pixelX = Math.round(offsetX + x * effectivePixelSize);
-        const pixelY = Math.round(offsetY + y * effectivePixelSize);
-        
-        // 마우스 오버 중인 픽셀에 선택한 색상 반투명하게 표시
-        if (!pixelMap.has(`${x},${y}`)) {
+        const key = `${x},${y}`;
+        if (!pixelMap.has(key)) {
+          const screenX = offsetX + x * pixelSize;
+          const screenY = offsetY + y * pixelSize;
+          
           ctx.globalAlpha = 0.5;
           ctx.fillStyle = selectedColor;
-          ctx.fillRect(pixelX, pixelY, effectivePixelSize, effectivePixelSize);
+          ctx.fillRect(screenX, screenY, pixelSize, pixelSize);
           ctx.globalAlpha = 1.0;
         }
       }
     }
-    
-    requestRef.current = requestAnimationFrame(draw);
-  }, [width, height, scale, position, pixelMap, hoverCoord, selectedColor]);
+  }, [width, height, position, scale, pixelMap, hoverCoord, selectedColor]);
   
-  // 캔버스 초기화 및 애니메이션 프레임 설정
+  // 그리기 함수 실행 (애니메이션 프레임 없이)
   useEffect(() => {
-    const canvas = canvasRef.current;
-    const container = containerRef.current;
-    if (!canvas || !container) return;
-    
-    // 캔버스 크기 설정
-    const updateCanvasSize = () => {
-      const { width: containerWidth, height: containerHeight } = container.getBoundingClientRect();
-      
-      // 고해상도 디스플레이 지원
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = containerWidth * dpr;
-      canvas.height = containerHeight * dpr;
-      canvas.style.width = `${containerWidth}px`;
-      canvas.style.height = `${containerHeight}px`;
-      
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.scale(dpr, dpr);
-      }
-    };
-    
-    updateCanvasSize();
-    
-    // 애니메이션 시작
-    requestRef.current = requestAnimationFrame(draw);
-    
-    // 창 크기 변경 이벤트
+    drawCanvas();
+  }, [drawCanvas]);
+  
+  // 창 크기 변경 감지
+  useEffect(() => {
     const handleResize = () => {
-      updateCanvasSize();
+      drawCanvas();
     };
     
     window.addEventListener('resize', handleResize);
-    
     return () => {
-      if (requestRef.current) {
-        cancelAnimationFrame(requestRef.current);
-      }
       window.removeEventListener('resize', handleResize);
     };
-  }, [draw]);
+  }, [drawCanvas]);
   
   // 소켓 연결 설정
   useEffect(() => {
@@ -256,7 +238,14 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
     };
   }, []);
   
-  // 마우스 이벤트 처리
+  // 캔버스 초기화 시 중앙으로 위치 조정
+  useEffect(() => {
+    // 캔버스 초기화 후 그리드 중앙이 화면 중앙에 오도록 position 설정
+    setPosition({ x: -(width / 2), y: -(height / 2) });
+    console.log('캔버스 초기화: 중앙으로 위치 조정됨', { width, height });
+  }, [width, height]);
+  
+  // 그리드 좌표 계산 함수
   const getGridCoordinates = useCallback((clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: -1, y: -1 };
@@ -265,31 +254,36 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
     const canvasX = clientX - rect.left;
     const canvasY = clientY - rect.top;
     
-    // 중앙점 기준 좌표 변환
+    // 픽셀 크기 계산
+    const basePixelSize = Math.min(rect.width / width, rect.height / height) * 0.9;
+    const pixelSize = basePixelSize * scale;
+    
+    // 중앙점 및 오프셋 계산
     const centerX = rect.width / 2;
     const centerY = rect.height / 2;
-    
-    // 픽셀 크기 계산
-    const basePixelSize = Math.min(rect.width / width, rect.height / height);
-    const effectivePixelSize = basePixelSize * scale;
+    const offsetX = centerX + position.x * scale;
+    const offsetY = centerY + position.y * scale;
     
     // 그리드 좌표 계산
-    const gridX = Math.floor((canvasX - centerX - position.x * scale) / effectivePixelSize);
-    const gridY = Math.floor((canvasY - centerY - position.y * scale) / effectivePixelSize);
+    const gridX = Math.floor((canvasX - offsetX) / pixelSize);
+    const gridY = Math.floor((canvasY - offsetY) / pixelSize);
     
     return { x: gridX, y: gridY };
   }, [width, height, scale, position]);
   
+  // 마우스 이벤트 핸들러
   const handleMouseDown = useCallback((e: MouseEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     
     if (e.button === 0) {
-      // 좌클릭 - 픽셀 색상 변경 또는 드래그 시작
-      const { x, y } = getGridCoordinates(e.clientX, e.clientY);
+      // 좌클릭 - 픽셀 색상 변경
+      const coords = getGridCoordinates(e.clientX, e.clientY);
+      const { x, y } = coords;
+      
       if (x >= 0 && x < width && y >= 0 && y < height) {
-        // 픽셀 색상 변경
         const updatedPixel = { x, y, color: selectedColor };
         
+        // 낙관적 UI 업데이트
         setPixels(prevPixels => {
           const pixelIndex = prevPixels.findIndex(p => p.x === x && p.y === y);
           
@@ -302,18 +296,23 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
           }
         });
         
+        // 서버로 업데이트 전송
         if (socketRef.current) {
           socketRef.current.emit('updatePixel', updatedPixel);
         }
       }
-    } else if (e.button === 2 || e.button === 1) {
-      // 우클릭 또는 중간 클릭 - 드래그 시작
+    } else if (e.button === 2) {
+      // 우클릭 - 드래그 시작
       setIsDragging(true);
       setLastMousePos({ x: e.clientX, y: e.clientY });
     }
   }, [getGridCoordinates, selectedColor, width, height]);
   
   const handleMouseMove = useCallback((e: MouseEvent<HTMLCanvasElement>) => {
+    // 호버 좌표 업데이트
+    const coords = getGridCoordinates(e.clientX, e.clientY);
+    setHoverCoord(coords);
+    
     // 드래그 처리
     if (isDragging) {
       const dx = e.clientX - lastMousePos.x;
@@ -326,11 +325,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
       
       setLastMousePos({ x: e.clientX, y: e.clientY });
     }
-    
-    // 마우스 오버 효과를 위한 그리드 좌표 계산
-    const gridCoord = getGridCoordinates(e.clientX, e.clientY);
-    setHoverCoord(gridCoord);
-  }, [isDragging, lastMousePos, scale, getGridCoordinates]);
+  }, [getGridCoordinates, isDragging, lastMousePos, scale]);
   
   const handleMouseUp = useCallback(() => {
     setIsDragging(false);
@@ -340,17 +335,43 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
   const handleWheel = useCallback((e: WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     
+    // 마우스 위치에서의 확대/축소
     const { clientX, clientY } = e;
-    const { x: gridX, y: gridY } = getGridCoordinates(clientX, clientY);
+    const coords = getGridCoordinates(clientX, clientY);
     
     // 확대/축소 계수
     const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
     const newScale = Math.max(0.1, Math.min(50, scale * zoomFactor));
     
-    setScale(newScale);
-  }, [scale, getGridCoordinates]);
+    // 마우스 위치를 기준으로 확대/축소
+    if (scale !== newScale) {
+      const zoomRatio = newScale / scale;
+      
+      // 마우스 위치를 기준으로 오프셋 조정
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (rect) {
+        const mouseX = clientX - rect.left;
+        const mouseY = clientY - rect.top;
+        
+        const centerX = rect.width / 2;
+        const centerY = rect.height / 2;
+        
+        // 마우스 위치에서의 상대 위치
+        const relX = mouseX - centerX - position.x * scale;
+        const relY = mouseY - centerY - position.y * scale;
+        
+        // 새 위치 계산
+        setPosition({
+          x: position.x - relX * (1 / scale - 1 / newScale),
+          y: position.y - relY * (1 / scale - 1 / newScale)
+        });
+      }
+      
+      setScale(newScale);
+    }
+  }, [scale, position, getGridCoordinates]);
   
-  // 우클릭 메뉴 방지
+  // 컨텍스트 메뉴 방지
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
   }, []);
@@ -358,7 +379,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
   // 키보드 이벤트 처리
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // H 키를 누르면 컨트롤 표시 토글
+      // H 키를 누르면 도움말 표시/숨김
       if (e.code === 'KeyH') {
         setShowControls(prev => !prev);
       }
@@ -384,13 +405,14 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
   return (
     <div 
       ref={containerRef} 
-      className="w-full h-full overflow-hidden"
+      className="w-screen h-screen overflow-hidden absolute inset-0"
     >
       <canvas
         ref={canvasRef}
         className="touch-none select-none w-full h-full"
         style={{
-          cursor: isDragging ? 'grabbing' : 'crosshair'
+          cursor: isDragging ? 'grabbing' : 'crosshair',
+          display: 'block' // 인라인 요소 간격 방지
         }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
