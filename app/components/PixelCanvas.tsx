@@ -44,6 +44,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
   const [hoverCoord, setHoverCoord] = useState<{ x: number, y: number } | null>(null);
   const [showMinimap, setShowMinimap] = useState<boolean>(true);
   const [animatedPixels, setAnimatedPixels] = useState<AnimatedPixel[]>([]);
+  const [userId] = useState<string>(`user-${Math.random().toString(36).substring(2, 9)}`); // 랜덤 사용자 ID 생성
   
   // 참조
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -134,6 +135,44 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
       }
     }
     
+    // 애니메이션 효과 그리기
+    const currentTime = Date.now();
+    animatedPixels.forEach(animPixel => {
+      const elapsedTime = currentTime - animPixel.timestamp;
+      const animDuration = 1000; // 1초 동안 애니메이션 지속
+      
+      if (elapsedTime < animDuration) {
+        const x = animPixel.x;
+        const y = animPixel.y;
+        
+        // 화면 좌표 계산
+        const screenX = offsetX + x * pixelSize;
+        const screenY = offsetY + y * pixelSize;
+        
+        // 애니메이션 진행률 (0~1)
+        const progress = elapsedTime / animDuration;
+        
+        // 물결 효과 크기 (시간에 따라 감소)
+        const waveSize = (1 - progress) * pixelSize * 1.5;
+        
+        // 반투명한 원형 파동 그리기
+        ctx.globalAlpha = 0.7 * (1 - progress);
+        ctx.beginPath();
+        ctx.arc(
+          screenX + pixelSize / 2, 
+          screenY + pixelSize / 2, 
+          waveSize, 
+          0, 
+          Math.PI * 2
+        );
+        ctx.fillStyle = animPixel.color;
+        ctx.fill();
+        
+        // 투명도 원상복구
+        ctx.globalAlpha = 1.0;
+      }
+    });
+    
     // 호버 효과
     if (hoverCoord && scale > 0.3) {
       const { x, y } = hoverCoord;
@@ -150,7 +189,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
         }
       }
     }
-  }, [width, height, position, scale, pixelMap, hoverCoord, selectedColor]);
+  }, [width, height, position, scale, pixelMap, hoverCoord, selectedColor, animatedPixels]);
   
   // 그리기 함수 실행 (애니메이션 프레임 없이)
   useEffect(() => {
@@ -204,7 +243,8 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
               setPixels(initialPixels);
             });
             
-            socket.on('pixelUpdated', (updatedPixel: Pixel) => {
+            socket.on('pixelUpdated', (updatedPixel: Pixel & { userId?: string }) => {
+              // 픽셀 업데이트
               setPixels(prevPixels => {
                 const pixelIndex = prevPixels.findIndex(
                   p => p.x === updatedPixel.x && p.y === updatedPixel.y
@@ -218,6 +258,23 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
                   return [...prevPixels, updatedPixel];
                 }
               });
+              
+              // 다른 사용자가 그린 픽셀이면 애니메이션 추가
+              if (updatedPixel.userId !== userId) {
+                const animPixel: AnimatedPixel = {
+                  ...updatedPixel,
+                  timestamp: Date.now()
+                };
+                
+                setAnimatedPixels(prev => [...prev, animPixel]);
+                
+                // 애니메이션 종료 후 목록에서 제거
+                setTimeout(() => {
+                  setAnimatedPixels(prev => 
+                    prev.filter(p => !(p.x === animPixel.x && p.y === animPixel.y))
+                  );
+                }, 1000);
+              }
             });
             
             socket.on('disconnect', () => {
@@ -247,7 +304,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
       }
       isConnectingRef.current = false;
     };
-  }, []);
+  }, [userId]);
   
   // 캔버스 초기화 시 중앙으로 위치 조정
   useEffect(() => {
@@ -292,7 +349,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
       const { x, y } = coords;
       
       if (x >= 0 && x < width && y >= 0 && y < height) {
-        const updatedPixel = { x, y, color: selectedColor };
+        const updatedPixel = { x, y, color: selectedColor, userId };
         
         // 낙관적 UI 업데이트
         setPixels(prevPixels => {
@@ -307,6 +364,24 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
           }
         });
         
+        // 애니메이션 효과 추가
+        const animPixel: AnimatedPixel = {
+          x, 
+          y, 
+          color: selectedColor,
+          timestamp: Date.now(),
+          userId
+        };
+        
+        setAnimatedPixels(prev => [...prev, animPixel]);
+        
+        // 애니메이션 종료 후 목록에서 제거
+        setTimeout(() => {
+          setAnimatedPixels(prev => 
+            prev.filter(p => !(p.x === x && p.y === y))
+          );
+        }, 1000);
+        
         // 서버로 업데이트 전송
         if (socketRef.current) {
           socketRef.current.emit('updatePixel', updatedPixel);
@@ -317,7 +392,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
       setIsDragging(true);
       setLastMousePos({ x: e.clientX, y: e.clientY });
     }
-  }, [getGridCoordinates, selectedColor, width, height]);
+  }, [getGridCoordinates, selectedColor, width, height, userId]);
   
   const handleMouseMove = useCallback((e: MouseEvent<HTMLCanvasElement>) => {
     // 호버 좌표 업데이트
@@ -418,6 +493,16 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
     );
   }, [showControls, hoverCoord]);
 
+  // 효율적인 렌더링을 위해 미니맵에 표시할 픽셀 제한
+  const visiblePixels = useMemo(() => {
+    // 픽셀 수가 많을 경우 샘플링하여 표시
+    if (pixels.length > 2000) {
+      const sampleRate = Math.ceil(pixels.length / 2000);
+      return pixels.filter((_, index) => index % sampleRate === 0);
+    }
+    return pixels;
+  }, [pixels]);
+
   return (
     <div 
       ref={containerRef} 
@@ -473,6 +558,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
           <p>좌클릭: 픽셀 색칠</p>
           <p>우클릭 + 드래그: 화면 이동</p>
           <p>H: 도움말 표시/숨김</p>
+          <p>M: 미니맵 표시/숨김</p>
           <p className="mt-1 text-gray-500">배율: {Math.round(scale * 100)}%</p>
         </div>
       )}
@@ -480,30 +566,93 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
       {coordinateIndicator}
       
       {/* 미니맵 */}
-      <div 
-        className="fixed bottom-24 right-4 bg-white rounded-lg shadow-lg overflow-hidden z-10 border border-gray-300" 
-        style={{ width: 150, height: 150, display: showMinimap ? 'block' : 'none' }}
-      >
-        {/* 미니맵 배경 */}
+      {showMinimap && (
         <div 
-          className="relative w-full h-full bg-gray-100"
+          className="fixed bottom-24 right-4 bg-white rounded-lg shadow-lg overflow-hidden z-10 border border-gray-300" 
+          style={{ width: 150, height: 150 }}
         >
-          {/* 미니맵 토글 버튼 */}
-          <div 
-            className="absolute top-1 right-1 w-5 h-5 bg-white bg-opacity-70 rounded-full flex items-center justify-center cursor-pointer text-xs shadow-sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              setShowMinimap(false);
-            }}
-          >
-            ✕
+          {/* 미니맵 배경 */}
+          <div className="relative w-full h-full bg-gray-100">
+            {/* 색칠된 픽셀들 표시 */}
+            {visiblePixels.map(pixel => {
+              const minimapPixelSize = 150 / Math.max(width, height);
+              return (
+                <div
+                  key={`minimap-${pixel.x}-${pixel.y}`}
+                  className="absolute"
+                  style={{
+                    left: `${pixel.x * minimapPixelSize}px`,
+                    top: `${pixel.y * minimapPixelSize}px`,
+                    width: `${minimapPixelSize}px`,
+                    height: `${minimapPixelSize}px`,
+                    backgroundColor: pixel.color,
+                    transform: minimapPixelSize < 0.5 ? 'scale(2)' : 'none',
+                    zIndex: 1
+                  }}
+                />
+              );
+            })}
+            
+            {/* 뷰포트 영역 표시 */}
+            {(() => {
+              const canvas = canvasRef.current;
+              if (!canvas) return null;
+              
+              const rect = canvas.getBoundingClientRect();
+              const basePixelSize = Math.min(rect.width / width, rect.height / height) * 0.9;
+              const pixelSize = basePixelSize * scale;
+              
+              // 화면에 보이는 픽셀 범위 계산
+              const centerX = rect.width / 2;
+              const centerY = rect.height / 2;
+              const offsetX = centerX + position.x * scale;
+              const offsetY = centerY + position.y * scale;
+              
+              const startX = Math.floor((0 - offsetX) / pixelSize);
+              const startY = Math.floor((0 - offsetY) / pixelSize);
+              const endX = Math.ceil((rect.width - offsetX) / pixelSize);
+              const endY = Math.ceil((rect.height - offsetY) / pixelSize);
+              
+              // 뷰포트 영역 표시 (화면에 보이는 영역)
+              const minimapPixelSize = 150 / Math.max(width, height);
+              const viewportX = Math.max(0, startX) * minimapPixelSize;
+              const viewportY = Math.max(0, startY) * minimapPixelSize;
+              const viewportWidth = Math.min(width, endX) * minimapPixelSize - viewportX;
+              const viewportHeight = Math.min(height, endY) * minimapPixelSize - viewportY;
+              
+              return (
+                <div
+                  className="absolute border-2 border-yellow-400 pointer-events-none"
+                  style={{
+                    left: `${viewportX}px`,
+                    top: `${viewportY}px`,
+                    width: `${viewportWidth}px`,
+                    height: `${viewportHeight}px`,
+                    transition: 'all 0.15s ease-out',
+                    zIndex: 2,
+                    boxShadow: '0 0 0 1px rgba(255, 255, 255, 0.3)'
+                  }}
+                />
+              );
+            })()}
+            
+            {/* 미니맵 토글 버튼 */}
+            <div 
+              className="absolute top-1 right-1 w-5 h-5 bg-white bg-opacity-70 rounded-full flex items-center justify-center cursor-pointer text-xs shadow-sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowMinimap(false);
+              }}
+            >
+              ✕
+            </div>
           </div>
         </div>
-      </div>
+      )}
       
-      {/* 디버깅용 미니맵 표시 상태 */}
+      {/* 디버깅용 표시 */}
       <div className="fixed top-4 left-4 bg-white bg-opacity-70 py-1 px-2 rounded-lg text-xs">
-        미니맵 상태: {showMinimap ? '표시' : '숨김'}
+        배율: {Math.round(scale * 100)}% | 미니맵: {showMinimap ? '표시' : '숨김'}
       </div>
     </div>
   );
