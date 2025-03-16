@@ -12,7 +12,7 @@ interface Pixel {
 interface PixelCanvasProps {
   width: number;
   height: number;
-  pixelSize: number;
+  pixelSize?: number; // 선택적 매개변수로 변경
 }
 
 // 픽셀 검색을 위한 해시맵 생성 함수
@@ -25,78 +25,57 @@ const createPixelMap = (pixels: Pixel[]) => {
 };
 
 const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize }) => {
+  // 실제 사용할 픽셀 크기 (화면 크기에 따라 동적으로 조정됨)
+  const [actualPixelSize, setActualPixelSize] = useState<number>(pixelSize || 16);
   const [pixels, setPixels] = useState<Pixel[]>([]);
   const [pixelMap, setPixelMap] = useState<Map<string, Pixel>>(new Map());
   const [selectedColor, setSelectedColor] = useState<string>('#000000');
   const [scale, setScale] = useState<number>(1);
-  // 초기 위치를 중앙으로 설정
-  const [position, setPosition] = useState<{ x: number; y: number }>({ 
-    x: 0, 
-    y: 0 
-  });
+  const [position, setPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const canvasRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const isConnectingRef = useRef<boolean>(false);
-  // 가시 영역 상태 추가
-  const [viewport, setViewport] = useState<{
-    startX: number;
-    startY: number;
-    endX: number;
-    endY: number;
-  }>({ startX: 0, startY: 0, endX: 0, endY: 0 });
-
-  // 중앙으로 초기 위치 설정
-  useEffect(() => {
-    if (canvasRef.current) {
-      const centerX = -((width * pixelSize) / 2) + (canvasRef.current.clientWidth / 2);
-      const centerY = -((height * pixelSize) / 2) + (canvasRef.current.clientHeight / 2);
-      setPosition({ x: centerX / pixelSize, y: centerY / pixelSize });
-    }
-  }, [width, height, pixelSize]);
 
   // 픽셀 맵 업데이트
   useEffect(() => {
     setPixelMap(createPixelMap(pixels));
   }, [pixels]);
 
-  // 가시 영역 계산
+  // 화면 크기에 맞게 픽셀 크기 조정 - 간단한 버전
   useEffect(() => {
-    if (!canvasRef.current) return;
-
-    const calculateVisibleCells = () => {
-      const { clientWidth, clientHeight } = canvasRef.current!;
+    const updateCanvasSize = () => {
+      if (!containerRef.current) return;
       
-      // 스케일과 위치를 고려하여 가시 영역 계산
-      const scaledPixelSize = pixelSize * scale;
-      const visibleStartX = Math.floor(-position.x - (clientWidth / scaledPixelSize / 2));
-      const visibleStartY = Math.floor(-position.y - (clientHeight / scaledPixelSize / 2));
-      const visibleEndX = Math.ceil(visibleStartX + (clientWidth / scaledPixelSize) + 2);
-      const visibleEndY = Math.ceil(visibleStartY + (clientHeight / scaledPixelSize) + 2);
-
-      // 범위 제한
-      const boundedStartX = Math.max(0, visibleStartX);
-      const boundedStartY = Math.max(0, visibleStartY);
-      const boundedEndX = Math.min(width, visibleEndX);
-      const boundedEndY = Math.min(height, visibleEndY);
-
-      setViewport({
-        startX: boundedStartX,
-        startY: boundedStartY,
-        endX: boundedEndX,
-        endY: boundedEndY
-      });
+      const container = containerRef.current;
+      const containerWidth = container.clientWidth;
+      const containerHeight = container.clientHeight;
+      
+      // 화면 크기에 따라 픽셀 크기 계산 (화면에 꽉 차게)
+      const cellWidth = Math.floor(containerWidth / width);
+      const cellHeight = Math.floor(containerHeight / height);
+      
+      // 픽셀을 정사각형으로 유지하면서 최대한 크게
+      const newPixelSize = Math.floor(Math.min(cellWidth, cellHeight));
+      
+      setActualPixelSize(newPixelSize);
     };
-
-    calculateVisibleCells();
-
-    // 스케일이나 위치가 변경될 때 가시 영역 재계산
-    const observer = new ResizeObserver(calculateVisibleCells);
-    observer.observe(canvasRef.current);
-
-    return () => observer.disconnect();
-  }, [position, scale, width, height, pixelSize]);
+    
+    // 초기 로드 및 창 크기 변경 시 크기 업데이트
+    updateCanvasSize();
+    
+    const handleResize = () => {
+      updateCanvasSize();
+    };
+    
+    window.addEventListener('resize', handleResize);
+    
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [width, height]);
 
   // 소켓 연결 설정 - 개선된 버전
   useEffect(() => {
@@ -199,13 +178,6 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize }) =
   const handleWheel = useCallback((e: WheelEvent<HTMLDivElement>) => {
     e.preventDefault();
     
-    // 마우스 포인터 위치
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-    
     // 확대/축소 스케일 변경 (휠 위로: 확대, 휠 아래로: 축소)
     setScale(prevScale => {
       // deltaY가 양수면 축소, 음수면 확대
@@ -214,25 +186,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize }) =
       const newScale = prevScale + (direction * zoomFactor);
       
       // 스케일 범위 제한 (0.5 ~ 20)
-      const limitedScale = Math.max(0.5, Math.min(20, newScale));
-      
-      // 마우스 포인터 위치에 따른 위치 조정 (줌 중심점 설정)
-      if (limitedScale !== prevScale) {
-        const scaleDiff = limitedScale / prevScale;
-        
-        // 마우스 포인터 위치를 기준으로 위치 조정
-        setPosition(prev => {
-          const mouseXInWorld = mouseX / prevScale - prev.x;
-          const mouseYInWorld = mouseY / prevScale - prev.y;
-          
-          return {
-            x: prev.x - (mouseXInWorld * (scaleDiff - 1)),
-            y: prev.y - (mouseYInWorld * (scaleDiff - 1))
-          };
-        });
-      }
-      
-      return limitedScale;
+      return Math.max(0.5, Math.min(20, newScale));
     });
   }, []);
 
@@ -300,13 +254,13 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize }) =
     e.preventDefault();
   }, []);
 
-  // 픽셀 그리드 렌더링 - 가시 영역만 렌더링하는 최적화 버전
+  // 픽셀 그리드 렌더링 - 전체 그리드 렌더링
   const renderPixelGrid = useCallback(() => {
     const grid: ReactElement[] = [];
     
-    // 가시 영역의 픽셀만 렌더링
-    for (let y = viewport.startY; y < viewport.endY; y++) {
-      for (let x = viewport.startX; x < viewport.endX; x++) {
+    // 전체 그리드 렌더링
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
         // Map을 사용하여 O(1) 시간 복잡도로 픽셀 찾기
         const pixel = pixelMap.get(`${x}-${y}`);
         const pixelColor = pixel ? pixel.color : '#FFFFFF';
@@ -316,13 +270,10 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize }) =
             key={`${x}-${y}`}
             className="pixel"
             style={{
-              width: `${pixelSize}px`,
-              height: `${pixelSize}px`,
+              width: `${actualPixelSize}px`,
+              height: `${actualPixelSize}px`,
               backgroundColor: pixelColor,
-              border: pixelSize > 3 ? '1px solid #EEEEEE' : 'none', // 픽셀이 작을 때는 테두리 제거
-              position: 'absolute',
-              left: `${x * pixelSize}px`,
-              top: `${y * pixelSize}px`
+              border: '1px solid #EEEEEE',
             }}
             onClick={() => handlePixelClick(x, y)}
           />
@@ -331,7 +282,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize }) =
     }
     
     return grid;
-  }, [pixelMap, viewport, pixelSize, handlePixelClick]);
+  }, [pixelMap, width, height, actualPixelSize, handlePixelClick]);
 
   // 색상 선택 팔레트
   const colorPalette = [
@@ -341,28 +292,28 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize }) =
   ];
 
   return (
-    <div className="w-full h-full relative overflow-hidden">
+    <div 
+      ref={containerRef} 
+      className="w-full h-full flex flex-col items-center justify-center"
+    >
+      {/* 캔버스 그리드 */}
       <div
         ref={canvasRef}
-        className="w-full h-full overflow-hidden cursor-crosshair"
+        className="overflow-hidden"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: `repeat(${width}, ${actualPixelSize}px)`,
+          transform: `scale(${scale})`,
+          transformOrigin: 'center',
+        }}
+        onWheel={handleWheel}
         onMouseDown={handleCanvasMouseDown}
         onMouseMove={handleCanvasMouseMove}
         onMouseUp={handleCanvasMouseUp}
         onMouseLeave={handleCanvasMouseUp}
-        onWheel={handleWheel}
         onContextMenu={handleContextMenu}
       >
-        <div
-          className="absolute"
-          style={{
-            width: `${width * pixelSize}px`,
-            height: `${height * pixelSize}px`,
-            transform: `scale(${scale}) translate(${position.x}px, ${position.y}px)`,
-            transformOrigin: 'center center',
-          }}
-        >
-          {renderPixelGrid()}
-        </div>
+        {renderPixelGrid()}
       </div>
 
       {/* 플로팅 색상 선택 팔레트 */}
@@ -398,8 +349,8 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize }) =
       {/* 현재 좌표 및 크기 표시 */}
       <div className="fixed top-4 right-4 bg-white bg-opacity-80 p-2 rounded-lg shadow-md text-xs z-10">
         <p>캔버스 크기: {width}x{height} ({width * height} 픽셀)</p>
+        <p>픽셀 크기: {actualPixelSize}px</p>
         <p>확대/축소: {Math.round(scale * 100)}%</p>
-        <p>가시 영역: {viewport.endX - viewport.startX}x{viewport.endY - viewport.startY} 픽셀</p>
       </div>
     </div>
   );
