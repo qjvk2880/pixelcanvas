@@ -33,6 +33,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
   const [lastMousePos, setLastMousePos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [showControls, setShowControls] = useState<boolean>(false);
   const [hoverCoord, setHoverCoord] = useState<{ x: number, y: number } | null>(null);
+  const [showMinimap, setShowMinimap] = useState<boolean>(true);
   
   // 참조
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -397,12 +398,157 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
     e.preventDefault();
   }, []);
   
+  // 효율적인 렌더링을 위해 미니맵에 표시할 픽셀 제한
+  const visiblePixels = useMemo(() => {
+    // 픽셀 수가 많을 경우 샘플링하여 표시
+    if (pixels.length > 2000) {
+      const sampleRate = Math.ceil(pixels.length / 2000);
+      return pixels.filter((_, index) => index % sampleRate === 0);
+    }
+    return pixels;
+  }, [pixels]);
+  
+  // 미니맵 렌더링 함수
+  const renderMinimap = useCallback(() => {
+    if (!showMinimap) return null;
+    
+    // 미니맵 크기 설정
+    const minimapSize = 150;
+    const minimapPixelSize = minimapSize / Math.max(width, height);
+    
+    // 뷰포트 계산
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    
+    const rect = canvas.getBoundingClientRect();
+    const basePixelSize = Math.min(rect.width / width, rect.height / height) * 0.9;
+    const pixelSize = basePixelSize * scale;
+    
+    // 화면에 보이는 픽셀 범위 계산
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+    const offsetX = centerX + position.x * scale;
+    const offsetY = centerY + position.y * scale;
+    
+    const startX = Math.floor((0 - offsetX) / pixelSize);
+    const startY = Math.floor((0 - offsetY) / pixelSize);
+    const endX = Math.ceil((rect.width - offsetX) / pixelSize);
+    const endY = Math.ceil((rect.height - offsetY) / pixelSize);
+    
+    // 뷰포트 영역 표시 (화면에 보이는 영역)
+    const viewportX = Math.max(0, startX) * minimapPixelSize;
+    const viewportY = Math.max(0, startY) * minimapPixelSize;
+    const viewportWidth = Math.min(width, endX) * minimapPixelSize - viewportX;
+    const viewportHeight = Math.min(height, endY) * minimapPixelSize - viewportY;
+    
+    // 미니맵 클릭 이벤트 처리 (해당 위치로 이동)
+    const handleMinimapClick = (e: React.MouseEvent<HTMLDivElement>) => {
+      const minimapRect = e.currentTarget.getBoundingClientRect();
+      const clickX = e.clientX - minimapRect.left;
+      const clickY = e.clientY - minimapRect.top;
+      
+      // 클릭한 위치의 그리드 좌표 계산
+      const gridX = Math.floor(clickX / minimapPixelSize);
+      const gridY = Math.floor(clickY / minimapPixelSize);
+      
+      // 해당 위치로 화면 중앙 이동 (부드러운 전환을 위해 점진적으로 이동)
+      const targetPosition = {
+        x: -gridX + (rect.width / pixelSize / 2),
+        y: -gridY + (rect.height / pixelSize / 2)
+      };
+      
+      // 부드러운 이동을 위한 애니메이션
+      const startPosition = { ...position };
+      const startTime = performance.now();
+      const duration = 300; // 애니메이션 시간 (ms)
+      
+      const animatePosition = (currentTime: number) => {
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        // easeOutCubic 이징 함수
+        const easeProgress = 1 - Math.pow(1 - progress, 3);
+        
+        if (progress < 1) {
+          setPosition({
+            x: startPosition.x + (targetPosition.x - startPosition.x) * easeProgress,
+            y: startPosition.y + (targetPosition.y - startPosition.y) * easeProgress
+          });
+          requestAnimationFrame(animatePosition);
+        } else {
+          setPosition(targetPosition);
+        }
+      };
+      
+      requestAnimationFrame(animatePosition);
+    };
+    
+    return (
+      <div 
+        className="fixed bottom-24 right-4 bg-white rounded-lg shadow-lg overflow-hidden z-10 border border-gray-300" 
+        style={{ width: minimapSize, height: minimapSize }}
+      >
+        {/* 미니맵 배경 */}
+        <div 
+          className="relative w-full h-full bg-gray-100"
+          onClick={handleMinimapClick}
+        >
+          {/* 색칠된 픽셀들 표시 */}
+          {visiblePixels.map(pixel => (
+            <div
+              key={`minimap-${pixel.x}-${pixel.y}`}
+              className="absolute"
+              style={{
+                left: `${pixel.x * minimapPixelSize}px`,
+                top: `${pixel.y * minimapPixelSize}px`,
+                width: `${minimapPixelSize}px`,
+                height: `${minimapPixelSize}px`,
+                backgroundColor: pixel.color,
+                transform: minimapPixelSize < 0.5 ? 'scale(2)' : 'none',
+                zIndex: 1
+              }}
+            />
+          ))}
+          
+          {/* 뷰포트 영역 표시 - 부드러운 트랜지션 적용 */}
+          <div
+            className="absolute border-2 border-yellow-400 pointer-events-none"
+            style={{
+              left: `${viewportX}px`,
+              top: `${viewportY}px`,
+              width: `${viewportWidth}px`,
+              height: `${viewportHeight}px`,
+              transition: 'all 0.15s ease-out',
+              zIndex: 2,
+              boxShadow: '0 0 0 1px rgba(255, 255, 255, 0.3)'
+            }}
+          />
+        </div>
+        
+        {/* 미니맵 토글 버튼 */}
+        <div 
+          className="absolute top-1 right-1 w-5 h-5 bg-white bg-opacity-70 rounded-full flex items-center justify-center cursor-pointer text-xs shadow-sm"
+          onClick={(e) => {
+            e.stopPropagation();
+            setShowMinimap(prev => !prev);
+          }}
+        >
+          ✕
+        </div>
+      </div>
+    );
+  }, [showMinimap, width, height, position, scale, visiblePixels]);
+  
   // 키보드 이벤트 처리
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // H 키를 누르면 도움말 표시/숨김
       if (e.code === 'KeyH') {
         setShowControls(prev => !prev);
+      }
+      
+      // M 키를 누르면 미니맵 표시/숨김
+      if (e.code === 'KeyM') {
+        setShowMinimap(prev => !prev);
       }
     };
     
@@ -478,11 +624,15 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
           <p>좌클릭: 픽셀 색칠</p>
           <p>우클릭 + 드래그: 화면 이동</p>
           <p>H: 도움말 표시/숨김</p>
+          <p>M: 미니맵 표시/숨김</p>
           <p className="mt-1 text-gray-500">배율: {Math.round(scale * 100)}%</p>
         </div>
       )}
       
       {coordinateIndicator}
+      
+      {/* 미니맵 */}
+      {renderMinimap()}
     </div>
   );
 };
