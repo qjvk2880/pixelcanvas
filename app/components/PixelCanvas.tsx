@@ -503,6 +503,56 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
     return pixels;
   }, [pixels]);
 
+  // 미니맵 관련 함수와 요소 추가
+  const handleMinimapClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const minimapRect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - minimapRect.left;
+    const clickY = e.clientY - minimapRect.top;
+    
+    // 미니맵 내에서의 비율 계산 (0 ~ 1 사이의 값)
+    const ratioX = clickX / minimapRect.width;
+    const ratioY = clickY / minimapRect.height;
+    
+    // 클릭 지점의 그리드 좌표 계산
+    const gridX = Math.floor(ratioX * width);
+    const gridY = Math.floor(ratioY * height);
+    
+    console.log('미니맵 클릭:', { ratioX, ratioY, gridX, gridY });
+    
+    // 클릭한 그리드 좌표를 화면 중앙에 위치시키기 위한 position 계산
+    const targetPosition = {
+      x: -gridX,
+      y: -gridY
+    };
+    
+    console.log('이동 목표 위치:', targetPosition);
+    
+    // 부드러운 이동을 위한 애니메이션
+    const startPosition = { ...position };
+    const startTime = performance.now();
+    const duration = 300; // 애니메이션 시간 (ms)
+    
+    const animatePosition = (currentTime: number) => {
+      const elapsed = currentTime - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      // easeOutCubic 이징 함수
+      const easeProgress = 1 - Math.pow(1 - progress, 3);
+      
+      if (progress < 1) {
+        setPosition({
+          x: startPosition.x + (targetPosition.x - startPosition.x) * easeProgress,
+          y: startPosition.y + (targetPosition.y - startPosition.y) * easeProgress
+        });
+        requestAnimationFrame(animatePosition);
+      } else {
+        setPosition(targetPosition);
+        console.log('애니메이션 완료, 최종 위치:', targetPosition);
+      }
+    };
+    
+    requestAnimationFrame(animatePosition);
+  }, [width, height, position]);
+
   return (
     <div 
       ref={containerRef} 
@@ -574,54 +624,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
           {/* 미니맵 배경 */}
           <div 
             className="relative w-full h-full bg-gray-100"
-            onClick={(e) => {
-              const minimapRect = e.currentTarget.getBoundingClientRect();
-              const clickX = e.clientX - minimapRect.left;
-              const clickY = e.clientY - minimapRect.top;
-              
-              // 클릭한 위치의 그리드 좌표 계산
-              const minimapPixelSize = 150 / Math.max(width, height);
-              const gridX = Math.floor(clickX / minimapPixelSize);
-              const gridY = Math.floor(clickY / minimapPixelSize);
-              
-              // 캔버스 정보 가져오기
-              const canvas = canvasRef.current;
-              if (!canvas) return;
-              
-              const rect = canvas.getBoundingClientRect();
-              const basePixelSize = Math.min(rect.width / width, rect.height / height) * 0.9;
-              const pixelSize = basePixelSize * scale;
-              
-              // 해당 위치로 화면 중앙 이동 (부드러운 전환을 위해 점진적으로 이동)
-              const targetPosition = {
-                x: -gridX + (rect.width / pixelSize / 2),
-                y: -gridY + (rect.height / pixelSize / 2)
-              };
-              
-              // 부드러운 이동을 위한 애니메이션
-              const startPosition = { ...position };
-              const startTime = performance.now();
-              const duration = 300; // 애니메이션 시간 (ms)
-              
-              const animatePosition = (currentTime: number) => {
-                const elapsed = currentTime - startTime;
-                const progress = Math.min(elapsed / duration, 1);
-                // easeOutCubic 이징 함수
-                const easeProgress = 1 - Math.pow(1 - progress, 3);
-                
-                if (progress < 1) {
-                  setPosition({
-                    x: startPosition.x + (targetPosition.x - startPosition.x) * easeProgress,
-                    y: startPosition.y + (targetPosition.y - startPosition.y) * easeProgress
-                  });
-                  requestAnimationFrame(animatePosition);
-                } else {
-                  setPosition(targetPosition);
-                }
-              };
-              
-              requestAnimationFrame(animatePosition);
-            }}
+            onClick={handleMinimapClick}
           >
             {/* 색칠된 픽셀들 표시 */}
             {visiblePixels.map(pixel => {
