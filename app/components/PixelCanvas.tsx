@@ -36,7 +36,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
   const [pixels, setPixels] = useState<Pixel[]>([]);
   const [pixelMap, setPixelMap] = useState<Map<string, string>>(new Map());
   const [selectedColor, setSelectedColor] = useState<string>('#000000');
-  const [scale, setScale] = useState<number>(5); // 기본 줌 레벨 5로 설정
+  const [scale, setScale] = useState<number>(15); // 기본 줌 레벨 15로 설정
   const [position, setPosition] = useState<{ x: number; y: number }>({ x: -(width / 2), y: -(height / 2) });
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [lastMousePos, setLastMousePos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
