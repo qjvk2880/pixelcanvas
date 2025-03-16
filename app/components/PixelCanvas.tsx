@@ -36,7 +36,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
   const [pixels, setPixels] = useState<Pixel[]>([]);
   const [pixelMap, setPixelMap] = useState<Map<string, string>>(new Map());
   const [selectedColor, setSelectedColor] = useState<string>('#000000');
-  const [scale, setScale] = useState<number>(1);
+  const [scale, setScale] = useState<number>(3); // 초기 줌 레벨을 3으로 설정
   const [position, setPosition] = useState<{ x: number; y: number }>({ x: -(width / 2), y: -(height / 2) });
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [lastMousePos, setLastMousePos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -45,6 +45,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
   const [showMinimap, setShowMinimap] = useState<boolean>(true);
   const [animatedPixels, setAnimatedPixels] = useState<AnimatedPixel[]>([]);
   const [userId] = useState<string>(`user-${Math.random().toString(36).substring(2, 9)}`); // 랜덤 사용자 ID 생성
+  const [initialLoadComplete, setInitialLoadComplete] = useState<boolean>(false);
   
   // 참조
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -218,12 +219,12 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
       try {
         console.log('소켓 연결 시도 중...');
         
-        fetch('/api/socketio')
+        fetch('/api/socket/io')
           .then(() => {
             console.log('Socket.io 서버 초기화 완료');
             
             const socket = io({
-              path: '/api/socketio',
+              path: '/api/socket/io',
               reconnectionAttempts: 10,
               reconnectionDelay: 3000,
               reconnection: true,
@@ -241,6 +242,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
             socket.on('initialPixels', (initialPixels: Pixel[]) => {
               console.log('초기 픽셀 데이터 수신:', initialPixels.length);
               setPixels(initialPixels);
+              setInitialLoadComplete(true); // 초기 데이터 로딩 완료 표시
             });
             
             socket.on('pixelUpdated', (updatedPixel: Pixel & { userId?: string }) => {
@@ -306,12 +308,35 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
     };
   }, [userId]);
   
-  // 캔버스 초기화 시 중앙으로 위치 조정
+  // 초기 데이터 로딩 완료 후 화면 중앙 및 적절한 줌 레벨로 설정
   useEffect(() => {
-    // 캔버스 초기화 후 그리드 중앙이 화면 중앙에 오도록 position 설정
-    setPosition({ x: -(width / 2), y: -(height / 2) });
-    console.log('캔버스 초기화: 중앙으로 위치 조정됨', { width, height });
-  }, [width, height]);
+    if (initialLoadComplete) {
+      // 중앙 좌표로 이동
+      const centerX = width / 2;
+      const centerY = height / 2;
+      setPosition({ x: -centerX, y: -centerY });
+      
+      // 화면 크기 기반으로 적절한 줌 레벨 계산
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        const screenWidth = rect.width;
+        const screenHeight = rect.height;
+        
+        // 화면에 약 20x20 픽셀이 보이도록 줌 레벨 조정
+        const targetVisiblePixels = 20;
+        const scaleX = screenWidth / (targetVisiblePixels * 16); // 16은 기본 픽셀 크기
+        const scaleY = screenHeight / (targetVisiblePixels * 16);
+        
+        // 두 방향 중 작은 스케일을 선택하여 모든 픽셀이 보이도록 함
+        const idealScale = Math.min(scaleX, scaleY);
+        
+        // 스케일 제한: 너무 크거나 작지 않도록
+        setScale(Math.max(0.5, Math.min(10, idealScale)));
+        
+        console.log('초기 데이터 로딩 완료: 화면 중앙 및 줌 레벨 설정됨', { centerX, centerY, scale: idealScale });
+      }
+    }
+  }, [initialLoadComplete, width, height]);
   
   // 그리드 좌표 계산 함수
   const getGridCoordinates = useCallback((clientX: number, clientY: number) => {
