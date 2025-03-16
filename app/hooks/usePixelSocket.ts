@@ -151,12 +151,16 @@ export function usePixelSocket({ userId }: UsePixelSocketProps): UsePixelSocketR
       timestamp: Date.now()
     };
     
-    setAnimatedPixels(prev => [...prev, animPixel]);
+    setAnimatedPixels(prev => {
+      // 동일한 위치의 이전 애니메이션 제거
+      const filtered = prev.filter(p => !(p.x === pixel.x && p.y === pixel.y));
+      return [...filtered, animPixel];
+    });
     
     // 애니메이션 종료 후 목록에서 제거
     setTimeout(() => {
       setAnimatedPixels(prev => 
-        prev.filter(p => !(p.x === pixel.x && p.y === pixel.y))
+        prev.filter(p => p !== animPixel)
       );
     }, 1000);
     

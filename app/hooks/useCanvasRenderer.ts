@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, RefObject } from 'react';
+import { useCallback, useEffect, RefObject, useRef } from 'react';
 import { Pixel, AnimatedPixel, Position, ViewportState } from '../types/pixel';
 
 interface UseCanvasRendererProps {
@@ -32,6 +32,9 @@ export function useCanvasRenderer({
   selectedColor,
   hoverCoord
 }: UseCanvasRendererProps) {
+  const animationFrameRef = useRef<number>();
+  const lastDrawTimeRef = useRef<number>(0);
+
   // 캔버스 그리기 함수
   const drawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
@@ -39,6 +42,18 @@ export function useCanvasRenderer({
     
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+    
+    const currentTime = Date.now();
+    const hasActiveAnimations = animatedPixels.some(
+      animPixel => currentTime - animPixel.timestamp < 1000
+    );
+
+    // 애니메이션이 없고 마지막 그리기가 100ms 이내라면 스킵
+    if (!hasActiveAnimations && currentTime - lastDrawTimeRef.current < 100) {
+      return;
+    }
+    
+    lastDrawTimeRef.current = currentTime;
     
     // 캔버스 크기 설정 및 초기화
     const rect = containerRef.current?.getBoundingClientRect() || canvas.getBoundingClientRect();
@@ -53,7 +68,7 @@ export function useCanvasRenderer({
     canvas.style.height = `${cssHeight}px`;
     
     // 컨텍스트 스케일 설정
-    ctx.setTransform(1, 0, 0, 1, 0, 0); // 변환 초기화
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.scale(dpr, dpr);
     
     // 배경 그리기
@@ -70,21 +85,22 @@ export function useCanvasRenderer({
     const offsetX = centerX + position.x * scale;
     const offsetY = centerY + position.y * scale;
     
-    // 표시 영역 계산
     const { startX, startY, endX, endY } = viewport;
     
     // 격자 그리기 (확대 수준이 높을 때만)
     if (scale > 2) {
       ctx.strokeStyle = '#EEEEEE';
       ctx.lineWidth = 0.5;
+      ctx.beginPath();
       
       for (let x = startX; x < endX; x++) {
         for (let y = startY; y < endY; y++) {
           const screenX = offsetX + x * pixelSize;
           const screenY = offsetY + y * pixelSize;
-          ctx.strokeRect(screenX, screenY, pixelSize, pixelSize);
+          ctx.rect(screenX, screenY, pixelSize, pixelSize);
         }
       }
+      ctx.stroke();
     }
     
     // 색칠된 픽셀 그리기
@@ -104,32 +120,22 @@ export function useCanvasRenderer({
     }
     
     // 애니메이션 효과 그리기
-    const currentTime = Date.now();
-    animatedPixels.forEach(animPixel => {
-      const elapsedTime = currentTime - animPixel.timestamp;
-      const animDuration = 1000; // 1초 동안 애니메이션 지속
-      
-      if (elapsedTime < animDuration) {
+    if (hasActiveAnimations) {
+      animatedPixels.forEach(animPixel => {
+        const elapsedTime = currentTime - animPixel.timestamp;
+        if (elapsedTime >= 1000) return;
+
         const x = animPixel.x;
         const y = animPixel.y;
         
-        // 비표시 영역인 경우 건너뜀
-        if (x < startX || x >= endX || y < startY || y >= endY) {
-          return;
-        }
+        if (x < startX || x >= endX || y < startY || y >= endY) return;
         
-        // 화면 좌표 계산
         const screenX = offsetX + x * pixelSize;
         const screenY = offsetY + y * pixelSize;
-        
-        // 애니메이션 진행률 (0~1)
-        const progress = elapsedTime / animDuration;
-        
-        // 물결 효과 크기 (시간에 따라 감소)
+        const progress = elapsedTime / 1000;
         const waveSize = (1 - progress) * pixelSize * 1.5;
         
-        // 반투명한 원형 파동 그리기
-        ctx.globalAlpha = 0.7 * (1 - progress);
+        ctx.globalAlpha = 0.3 * (1 - progress);
         ctx.beginPath();
         ctx.arc(
           screenX + pixelSize / 2, 
@@ -140,11 +146,12 @@ export function useCanvasRenderer({
         );
         ctx.fillStyle = animPixel.color;
         ctx.fill();
-        
-        // 투명도 원상복구
         ctx.globalAlpha = 1.0;
-      }
-    });
+      });
+
+      // 애니메이션이 있을 때만 다음 프레임 요청
+      animationFrameRef.current = requestAnimationFrame(drawCanvas);
+    }
     
     // 호버 효과
     if (hoverCoord && scale > 0.3) {
@@ -180,6 +187,11 @@ export function useCanvasRenderer({
   // 그리기 함수 실행
   useEffect(() => {
     drawCanvas();
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
   }, [drawCanvas]);
   
   // 창 크기 변경 감지
