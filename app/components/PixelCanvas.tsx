@@ -9,6 +9,15 @@ interface Pixel {
   color: string;
 }
 
+// 애니메이션 효과를 위한 인터페이스 추가
+interface AnimatedPixel {
+  x: number;
+  y: number;
+  color: string;
+  timestamp: number;
+  userId?: string; // 누가 그렸는지 식별하기 위한 ID
+}
+
 interface PixelCanvasProps {
   width: number;
   height: number;
@@ -34,6 +43,8 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
   const [showControls, setShowControls] = useState<boolean>(false);
   const [hoverCoord, setHoverCoord] = useState<{ x: number, y: number } | null>(null);
   const [showMinimap, setShowMinimap] = useState<boolean>(true);
+  const [animatedPixels, setAnimatedPixels] = useState<AnimatedPixel[]>([]);
+  const [userId] = useState<string>(`user-${Math.random().toString(36).substring(2, 9)}`); // 랜덤 사용자 ID 생성
   
   // 참조
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -124,6 +135,44 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
       }
     }
     
+    // 애니메이션 효과 그리기
+    const currentTime = Date.now();
+    animatedPixels.forEach(animPixel => {
+      const elapsedTime = currentTime - animPixel.timestamp;
+      const animDuration = 1000; // 1초 동안 애니메이션 지속
+      
+      if (elapsedTime < animDuration) {
+        const x = animPixel.x;
+        const y = animPixel.y;
+        
+        // 화면 좌표 계산
+        const screenX = offsetX + x * pixelSize;
+        const screenY = offsetY + y * pixelSize;
+        
+        // 애니메이션 진행률 (0~1)
+        const progress = elapsedTime / animDuration;
+        
+        // 물결 효과 크기 (시간에 따라 감소)
+        const waveSize = (1 - progress) * pixelSize * 1.5;
+        
+        // 반투명한 원형 파동 그리기
+        ctx.globalAlpha = 0.7 * (1 - progress);
+        ctx.beginPath();
+        ctx.arc(
+          screenX + pixelSize / 2, 
+          screenY + pixelSize / 2, 
+          waveSize, 
+          0, 
+          Math.PI * 2
+        );
+        ctx.fillStyle = animPixel.color;
+        ctx.fill();
+        
+        // 투명도 원상복구
+        ctx.globalAlpha = 1.0;
+      }
+    });
+    
     // 호버 효과
     if (hoverCoord && scale > 0.3) {
       const { x, y } = hoverCoord;
@@ -140,7 +189,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
         }
       }
     }
-  }, [width, height, position, scale, pixelMap, hoverCoord, selectedColor]);
+  }, [width, height, position, scale, pixelMap, hoverCoord, selectedColor, animatedPixels]);
   
   // 그리기 함수 실행 (애니메이션 프레임 없이)
   useEffect(() => {
@@ -194,7 +243,8 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
               setPixels(initialPixels);
             });
             
-            socket.on('pixelUpdated', (updatedPixel: Pixel) => {
+            socket.on('pixelUpdated', (updatedPixel: Pixel & { userId?: string }) => {
+              // 픽셀 업데이트
               setPixels(prevPixels => {
                 const pixelIndex = prevPixels.findIndex(
                   p => p.x === updatedPixel.x && p.y === updatedPixel.y
@@ -208,6 +258,23 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
                   return [...prevPixels, updatedPixel];
                 }
               });
+              
+              // 다른 사용자가 그린 픽셀이면 애니메이션 추가
+              if (updatedPixel.userId !== userId) {
+                const animPixel: AnimatedPixel = {
+                  ...updatedPixel,
+                  timestamp: Date.now()
+                };
+                
+                setAnimatedPixels(prev => [...prev, animPixel]);
+                
+                // 애니메이션 종료 후 목록에서 제거
+                setTimeout(() => {
+                  setAnimatedPixels(prev => 
+                    prev.filter(p => !(p.x === animPixel.x && p.y === animPixel.y))
+                  );
+                }, 1000);
+              }
             });
             
             socket.on('disconnect', () => {
@@ -237,7 +304,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
       }
       isConnectingRef.current = false;
     };
-  }, []);
+  }, [userId]);
   
   // 캔버스 초기화 시 중앙으로 위치 조정 및 적절한 확대 수준 설정
   useEffect(() => {
@@ -303,7 +370,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
       const { x, y } = coords;
       
       if (x >= 0 && x < width && y >= 0 && y < height) {
-        const updatedPixel = { x, y, color: selectedColor };
+        const updatedPixel = { x, y, color: selectedColor, userId };
         
         // 낙관적 UI 업데이트
         setPixels(prevPixels => {
@@ -318,6 +385,24 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
           }
         });
         
+        // 애니메이션 효과 추가
+        const animPixel: AnimatedPixel = {
+          x, 
+          y, 
+          color: selectedColor,
+          timestamp: Date.now(),
+          userId
+        };
+        
+        setAnimatedPixels(prev => [...prev, animPixel]);
+        
+        // 애니메이션 종료 후 목록에서 제거
+        setTimeout(() => {
+          setAnimatedPixels(prev => 
+            prev.filter(p => !(p.x === x && p.y === y))
+          );
+        }, 1000);
+        
         // 서버로 업데이트 전송
         if (socketRef.current) {
           socketRef.current.emit('updatePixel', updatedPixel);
@@ -328,7 +413,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
       setIsDragging(true);
       setLastMousePos({ x: e.clientX, y: e.clientY });
     }
-  }, [getGridCoordinates, selectedColor, width, height]);
+  }, [getGridCoordinates, selectedColor, width, height, userId]);
   
   const handleMouseMove = useCallback((e: MouseEvent<HTMLCanvasElement>) => {
     // 호버 좌표 업데이트
@@ -357,41 +442,26 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
   const handleWheel = useCallback((e: WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     
-    // 마우스 위치에서의 확대/축소
-    const { clientX, clientY } = e;
-    const coords = getGridCoordinates(clientX, clientY);
-    
     // 확대/축소 계수
     const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
     const newScale = Math.max(0.1, Math.min(50, scale * zoomFactor));
     
-    // 마우스 위치를 기준으로 확대/축소
+    // 화면 중앙을 기준으로 확대/축소
     if (scale !== newScale) {
-      const zoomRatio = newScale / scale;
+      // 스케일 변화에 따른 위치 조정 (화면 중앙 기준)
+      const scaleRatio = newScale / scale;
       
-      // 마우스 위치를 기준으로 오프셋 조정
-      const rect = canvasRef.current?.getBoundingClientRect();
-      if (rect) {
-        const mouseX = clientX - rect.left;
-        const mouseY = clientY - rect.top;
-        
-        const centerX = rect.width / 2;
-        const centerY = rect.height / 2;
-        
-        // 마우스 위치에서의 상대 위치
-        const relX = mouseX - centerX - position.x * scale;
-        const relY = mouseY - centerY - position.y * scale;
-        
-        // 새 위치 계산
-        setPosition({
-          x: position.x - relX * (1 / scale - 1 / newScale),
-          y: position.y - relY * (1 / scale - 1 / newScale)
-        });
-      }
+      // 중앙을 기준으로 확대/축소하면 position 값을 조정해야 함
+      // 확대 시: 중앙에서 position까지의 거리가 길어짐
+      // 축소 시: 중앙에서 position까지의 거리가 짧아짐
+      setPosition({
+        x: position.x * scaleRatio,
+        y: position.y * scaleRatio
+      });
       
       setScale(newScale);
     }
-  }, [scale, position, getGridCoordinates]);
+  }, [scale, position]);
   
   // 컨텍스트 메뉴 방지
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
