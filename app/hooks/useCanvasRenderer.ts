@@ -4,8 +4,8 @@ import { useCallback, useEffect, RefObject, useRef } from 'react';
 import { Pixel, AnimatedPixel, Position, ViewportState } from '../types/pixel';
 
 interface UseCanvasRendererProps {
-  canvasRef: RefObject<HTMLCanvasElement>;
-  containerRef: RefObject<HTMLDivElement>;
+  canvasRef: RefObject<HTMLCanvasElement | null>;
+  containerRef: RefObject<HTMLDivElement | null>;
   pixels: Pixel[];
   pixelMap: Map<string, string>;
   animatedPixels: AnimatedPixel[];
