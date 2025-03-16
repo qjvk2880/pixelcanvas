@@ -36,7 +36,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
   const [pixels, setPixels] = useState<Pixel[]>([]);
   const [pixelMap, setPixelMap] = useState<Map<string, string>>(new Map());
   const [selectedColor, setSelectedColor] = useState<string>('#000000');
-  const [scale, setScale] = useState<number>(3); // 초기 줌 레벨을 3으로 설정
+  const [scale, setScale] = useState<number>(5); // 기본 줌 레벨 5로 설정
   const [position, setPosition] = useState<{ x: number; y: number }>({ x: -(width / 2), y: -(height / 2) });
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [lastMousePos, setLastMousePos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -219,12 +219,12 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
       try {
         console.log('소켓 연결 시도 중...');
         
-        fetch('/api/socket/io')
+        fetch('/api/socketio')
           .then(() => {
             console.log('Socket.io 서버 초기화 완료');
             
             const socket = io({
-              path: '/api/socket/io',
+              path: '/api/socketio',
               reconnectionAttempts: 10,
               reconnectionDelay: 3000,
               reconnection: true,
@@ -316,27 +316,10 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
       const centerY = height / 2;
       setPosition({ x: -centerX, y: -centerY });
       
-      // 화면 크기 기반으로 적절한 줌 레벨 계산
-      if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
-        const screenWidth = rect.width;
-        const screenHeight = rect.height;
-        
-        // 화면에 약 20x20 픽셀이 보이도록 줌 레벨 조정
-        const targetVisiblePixels = 20;
-        const scaleX = screenWidth / (targetVisiblePixels * 16); // 16은 기본 픽셀 크기
-        const scaleY = screenHeight / (targetVisiblePixels * 16);
-        
-        // 두 방향 중 작은 스케일을 선택하여 모든 픽셀이 보이도록 함
-        const idealScale = Math.min(scaleX, scaleY);
-        
-        // 스케일 제한: 너무 크거나 작지 않도록
-        setScale(Math.max(0.5, Math.min(10, idealScale)));
-        
-        console.log('초기 데이터 로딩 완료: 화면 중앙 및 줌 레벨 설정됨', { centerX, centerY, scale: idealScale });
-      }
+      // 초기 줌 레벨 유지 (자동 계산하지 않음)
+      console.log('초기 데이터 로딩 완료: 화면 중앙으로 이동 완료', { centerX, centerY, currentScale: scale });
     }
-  }, [initialLoadComplete, width, height]);
+  }, [initialLoadComplete, width, height, scale]);
   
   // 그리드 좌표 계산 함수
   const getGridCoordinates = useCallback((clientX: number, clientY: number) => {
