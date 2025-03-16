@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, ReactElement } from 'react';
+import { useState, useEffect, useRef, ReactElement, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
 
 interface Pixel {
@@ -15,22 +15,37 @@ interface PixelCanvasProps {
   pixelSize: number;
 }
 
+// 픽셀 검색을 위한 해시맵 생성 함수
+const createPixelMap = (pixels: Pixel[]) => {
+  const map = new Map<string, Pixel>();
+  pixels.forEach(pixel => {
+    map.set(`${pixel.x}-${pixel.y}`, pixel);
+  });
+  return map;
+};
+
 const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize }) => {
   const [pixels, setPixels] = useState<Pixel[]>([]);
+  const [pixelMap, setPixelMap] = useState<Map<string, Pixel>>(new Map());
   const [selectedColor, setSelectedColor] = useState<string>('#000000');
   const [isDrawing, setIsDrawing] = useState<boolean>(false);
   const [scale, setScale] = useState<number>(1);
   const [position, setPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const canvasRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
+  const isConnectingRef = useRef<boolean>(false);
 
-  // 소켓 연결 설정
+  // 픽셀 맵 업데이트
   useEffect(() => {
-    // 이미 연결되어 있으면 재연결하지 않음
-    if (socketRef.current) return;
+    setPixelMap(createPixelMap(pixels));
+  }, [pixels]);
+
+  // 소켓 연결 설정 - 개선된 버전
+  useEffect(() => {
+    // 이미 연결 중이거나 연결되어 있으면 재연결하지 않음
+    if (socketRef.current || isConnectingRef.current) return;
     
-    let retryCount = 0;
-    const maxRetries = 3;
+    isConnectingRef.current = true;
     
     const connectSocket = () => {
       try {
@@ -43,12 +58,14 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize }) =
             
             // Socket.io 클라이언트 연결
             const socket = io({
-              path: '/api/socketio', // 경로가 pages/api/socketio.ts와 일치하는지 확인
-              reconnectionAttempts: 5,
-              reconnectionDelay: 1000,
+              path: '/api/socketio',
+              reconnectionAttempts: 10,
+              reconnectionDelay: 3000,
               reconnection: true,
+              timeout: 20000,
               transports: ['websocket', 'polling'],
-              addTrailingSlash: false,
+              autoConnect: true,
+              forceNew: true
             });
             
             socketRef.current = socket;
@@ -56,18 +73,17 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize }) =
             // 이벤트 리스너 설정
             socket.on('connect', () => {
               console.log('소켓 연결됨:', socket.id);
-              retryCount = 0; // 연결 성공 시 재시도 카운트 초기화
+              isConnectingRef.current = false;
             });
             
             // 초기 픽셀 데이터 수신
             socket.on('initialPixels', (initialPixels: Pixel[]) => {
-              console.log('초기 픽셀 데이터 수신:', initialPixels);
+              console.log('초기 픽셀 데이터 수신:', initialPixels.length);
               setPixels(initialPixels);
             });
             
             // 다른 사용자가 픽셀을 업데이트할 때 이벤트 수신
             socket.on('pixelUpdated', (updatedPixel: Pixel) => {
-              console.log('픽셀 업데이트 수신:', updatedPixel);
               setPixels(prevPixels => {
                 const pixelIndex = prevPixels.findIndex(
                   p => p.x === updatedPixel.x && p.y === updatedPixel.y
@@ -89,41 +105,21 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize }) =
               console.log('소켓 연결 해제됨');
             });
             
-            socket.on('reconnect', (attemptNumber) => {
+            socket.io.on('error', (error) => {
+              console.error('소켓 IO 오류:', error);
+            });
+            
+            socket.io.on('reconnect', (attemptNumber) => {
               console.log(`재연결 성공 (${attemptNumber}번째 시도)`);
-            });
-            
-            socket.on('reconnect_attempt', (attemptNumber) => {
-              console.log(`재연결 시도 중... (${attemptNumber}번째 시도)`);
-            });
-            
-            socket.on('reconnect_error', (error) => {
-              console.error('재연결 오류:', error);
-            });
-            
-            socket.on('connect_error', (err) => {
-              console.error('소켓 연결 오류:', err.message);
-              
-              // 연결 실패 시 재시도
-              if (retryCount < maxRetries) {
-                retryCount++;
-                console.log(`연결 재시도 (${retryCount}/${maxRetries})...`);
-                setTimeout(connectSocket, 2000); // 2초 후 재시도
-              }
             });
           })
           .catch(err => {
             console.error('소켓 서버 초기화 API 호출 오류:', err);
-            
-            // API 호출 실패 시 재시도
-            if (retryCount < maxRetries) {
-              retryCount++;
-              console.log(`API 호출 재시도 (${retryCount}/${maxRetries})...`);
-              setTimeout(connectSocket, 2000); // 2초 후 재시도
-            }
+            isConnectingRef.current = false;
           });
       } catch (error) {
         console.error('소켓 초기화 오류:', error);
+        isConnectingRef.current = false;
       }
     };
     
@@ -137,53 +133,66 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize }) =
         socketRef.current.disconnect();
         socketRef.current = null;
       }
+      isConnectingRef.current = false;
     };
   }, []);
 
-  // 픽셀 클릭 핸들러
-  const handlePixelClick = (x: number, y: number) => {
-    if (!socketRef.current) {
-      console.error('소켓이 연결되지 않음');
-      return;
-    }
-
+  // 픽셀 클릭 핸들러 - 낙관적 UI 업데이트 적용
+  const handlePixelClick = useCallback((x: number, y: number) => {
     const updatedPixel = { x, y, color: selectedColor };
-    console.log('픽셀 업데이트 전송:', updatedPixel);
     
-    // 서버에 픽셀 업데이트 이벤트 전송
-    socketRef.current.emit('updatePixel', updatedPixel);
-  };
+    // 낙관적 UI 업데이트 - 서버 응답 전에 UI 먼저 업데이트
+    setPixels(prevPixels => {
+      const pixelIndex = prevPixels.findIndex(p => p.x === x && p.y === y);
+      
+      if (pixelIndex !== -1) {
+        const newPixels = [...prevPixels];
+        newPixels[pixelIndex] = updatedPixel;
+        return newPixels;
+      } else {
+        return [...prevPixels, updatedPixel];
+      }
+    });
+    
+    // 소켓 연결되었을 때만 서버로 전송
+    if (socketRef.current) {
+      socketRef.current.emit('updatePixel', updatedPixel);
+    } else {
+      console.error('소켓이 연결되지 않음');
+    }
+  }, [selectedColor]);
 
   // 마우스 이벤트 핸들러 (드래그로 그리기)
-  const handleMouseDown = (x: number, y: number) => {
+  const handleMouseDown = useCallback((x: number, y: number) => {
     setIsDrawing(true);
     handlePixelClick(x, y);
-  };
+  }, [handlePixelClick]);
 
-  const handleMouseMove = (x: number, y: number) => {
+  const handleMouseMove = useCallback((x: number, y: number) => {
     if (!isDrawing) return;
     handlePixelClick(x, y);
-  };
+  }, [isDrawing, handlePixelClick]);
 
-  const handleMouseUp = () => {
+  const handleMouseUp = useCallback(() => {
     setIsDrawing(false);
-  };
+  }, []);
 
   // 확대/축소 핸들러
-  const handleZoom = (zoomIn: boolean) => {
+  const handleZoom = useCallback((zoomIn: boolean) => {
     setScale(prevScale => {
       const newScale = zoomIn ? prevScale + 0.1 : prevScale - 0.1;
       return Math.max(0.5, Math.min(3, newScale)); // 스케일 범위 제한
     });
-  };
+  }, []);
 
-  // 픽셀 그리드 렌더링
-  const renderPixelGrid = () => {
+  // 픽셀 그리드 렌더링 - 최적화
+  const renderPixelGrid = useCallback(() => {
     const grid: ReactElement[] = [];
     
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
-        const pixel = pixels.find(p => p.x === x && p.y === y);
+        // Map을 사용하여 O(1) 시간 복잡도로 픽셀 찾기
+        const pixel = pixelMap.get(`${x}-${y}`);
         const pixelColor = pixel ? pixel.color : '#FFFFFF';
         
         grid.push(
@@ -205,7 +214,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize }) =
     }
     
     return grid;
-  };
+  }, [pixelMap, width, height, pixelSize, handleMouseDown, handleMouseMove, handleMouseUp]);
 
   // 색상 선택 팔레트
   const colorPalette = [

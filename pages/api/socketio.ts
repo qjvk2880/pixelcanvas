@@ -39,12 +39,15 @@ export default async function handler(
 
     const io = new SocketIOServer(res.socket.server, {
       path: '/api/socketio',
-      addTrailingSlash: false,
       cors: {
         origin: '*',
         methods: ['GET', 'POST'],
         credentials: true
       },
+      connectTimeout: 45000,
+      pingInterval: 30000,
+      pingTimeout: 60000,
+      transports: ['websocket', 'polling']
     });
 
     // 소켓 연결 이벤트 처리
@@ -58,18 +61,28 @@ export default async function handler(
       socket.on('updatePixel', async (pixel) => {
         try {
           const updatedPixel = await updatePixelInDb(pixel);
-          console.log('픽셀 업데이트됨:', updatedPixel);
 
-          // 모든 클라이언트에 업데이트 브로드캐스트
-          io.emit('pixelUpdated', updatedPixel);
+          // 모든 클라이언트에 업데이트 브로드캐스트 (자신 제외 옵션도 가능)
+          socket.broadcast.emit('pixelUpdated', updatedPixel);
         } catch (error) {
           console.error('픽셀 업데이트 오류:', error);
+          // 오류 발생 시에도 클라이언트에게 알림
+          socket.emit('pixelUpdateError', { x: pixel.x, y: pixel.y, error: 'Update failed' });
         }
       });
 
       socket.on('disconnect', () => {
         console.log('클라이언트 연결 해제됨:', socket.id);
       });
+
+      socket.on('error', (error) => {
+        console.error('소켓 오류:', error);
+      });
+    });
+
+    // 서버 오류 처리
+    io.engine.on('connection_error', (err) => {
+      console.error('연결 오류:', err);
     });
 
     res.socket.server.io = io;
@@ -81,10 +94,25 @@ export default async function handler(
   res.end();
 }
 
-// 초기 픽셀 데이터 로드
+// 초기 픽셀 데이터 로드 - 캐싱 추가
+let cachedPixels: any[] | null = null;
+const pixelCacheTime = 10000; // 10초 캐시
+let lastCacheTime = 0;
+
 const loadInitialPixels = async (socket: any) => {
   try {
+    // 캐시된 데이터가 있고 캐시 시간이 지나지 않았으면 사용
+    const now = Date.now();
+    if (cachedPixels && now - lastCacheTime < pixelCacheTime) {
+      console.log(`캐시된 픽셀 데이터 전송 (${cachedPixels.length}개)`);
+      socket.emit('initialPixels', cachedPixels);
+      return;
+    }
+
+    // 캐시가 없거나 만료된 경우 새로 로드
     const pixels = await Pixel.find({}).lean();
+    cachedPixels = pixels;
+    lastCacheTime = now;
     console.log(`초기 픽셀 데이터 전송 (${pixels.length}개)`);
     socket.emit('initialPixels', pixels);
   } catch (error) {
@@ -103,6 +131,17 @@ const updatePixelInDb = async (pixelData: { x: number; y: number; color: string 
     const options = { upsert: true, new: true, setDefaultsOnInsert: true };
     
     const updatedPixel = await Pixel.findOneAndUpdate(filter, update, options).lean();
+    
+    // 캐시 업데이트
+    if (cachedPixels) {
+      const pixelIndex = cachedPixels.findIndex(p => p.x === x && p.y === y);
+      if (pixelIndex !== -1) {
+        cachedPixels[pixelIndex] = updatedPixel;
+      } else {
+        cachedPixels.push(updatedPixel);
+      }
+    }
+    
     return updatedPixel;
   } catch (error) {
     console.error('데이터베이스 픽셀 업데이트 오류:', error);
