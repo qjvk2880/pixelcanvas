@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, ReactElement } from 'react';
 import { io, Socket } from 'socket.io-client';
 
 interface Pixel {
@@ -43,7 +43,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize }) =
             
             // Socket.io 클라이언트 연결
             const socket = io({
-              path: '/api/socketio',
+              path: '/api/socketio', // 경로가 pages/api/socketio.ts와 일치하는지 확인
               reconnectionAttempts: 5,
               reconnectionDelay: 1000,
               reconnection: true,
@@ -179,7 +179,7 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize }) =
 
   // 픽셀 그리드 렌더링
   const renderPixelGrid = () => {
-    const grid: JSX.Element[] = [];
+    const grid: ReactElement[] = [];
     
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {

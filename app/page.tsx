@@ -1,3 +1,5 @@
+'use client';
+
 import dynamic from 'next/dynamic';
 
 // 클라이언트 사이드에서만 렌더링하기 위해 동적으로 임포트
