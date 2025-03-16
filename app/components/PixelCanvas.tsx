@@ -20,6 +20,8 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
   const [showMinimap, setShowMinimap] = useState<boolean>(true);
   const [userId] = useState<string>(`user-${Math.random().toString(36).substring(2, 9)}`);
   const [nickname, setNickname] = useState<string>('');
+  const [isPainting, setIsPainting] = useState<boolean>(false);
+  const [lastPaintedPixel, setLastPaintedPixel] = useState<{x: number, y: number} | null>(null);
   
   // 참조
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -138,18 +140,19 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
   
   // 마우스 이벤트 핸들러
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    e.preventDefault();
-    
-    if (!containerRef.current) return;
-    const containerRect = containerRef.current.getBoundingClientRect();
-    
     if (e.button === 0) {
-      // 좌클릭 - 픽셀 색상 변경
+      // 좌클릭 - 픽셀 그리기
+      if (!containerRef.current) return;
+      const containerRect = containerRef.current.getBoundingClientRect();
       const coords = getGridCoordinates(e.clientX, e.clientY, containerRect);
+      if (!coords) return;
+      
       const { x, y } = coords;
       
       if (x >= 0 && x < width && y >= 0 && y < height) {
         updatePixel({ x, y, color: selectedColor });
+        setIsPainting(true);
+        setLastPaintedPixel({ x, y });
       }
     } else if (e.button === 2) {
       // 우클릭 - 드래그 시작
@@ -165,9 +168,39 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
     const coords = getGridCoordinates(e.clientX, e.clientY, containerRect);
     setHoverCoord(coords);
     
+    // 그리기 모드인 경우 픽셀 그리기
+    if (isPainting && coords) {
+      const { x, y } = coords;
+      
+      // 이미 그린 픽셀이 아닌 경우에만 그리기 (중복 방지)
+      if (lastPaintedPixel && (lastPaintedPixel.x !== x || lastPaintedPixel.y !== y)) {
+        if (x >= 0 && x < width && y >= 0 && y < height) {
+          updatePixel({ x, y, color: selectedColor });
+          setLastPaintedPixel({ x, y });
+        }
+      }
+    }
+    
     // 드래그 처리
     handleDrag(e.clientX, e.clientY);
-  }, [getGridCoordinates, handleDrag]);
+  }, [getGridCoordinates, handleDrag, isPainting, selectedColor, width, height, updatePixel, lastPaintedPixel]);
+  
+  // 마우스 업 이벤트 처리
+  const handleMouseUp = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (e.button === 0) {
+      // 좌클릭 종료 - 그리기 중지
+      setIsPainting(false);
+      setLastPaintedPixel(null);
+    }
+    stopDragging();
+  }, [stopDragging]);
+  
+  // 마우스가 캔버스를 벗어날 때 그리기 중지
+  const handleMouseLeave = useCallback(() => {
+    setIsPainting(false);
+    setLastPaintedPixel(null);
+    stopDragging();
+  }, [stopDragging]);
   
   // 휠 이벤트 처리
   const handleWheel = useCallback((e: React.WheelEvent<HTMLCanvasElement>) => {
@@ -198,10 +231,10 @@ const PixelCanvas: React.FC<PixelCanvasProps> = ({ width, height, pixelSize = 1 
         }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
-        onMouseUp={stopDragging}
-        onMouseLeave={stopDragging}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseLeave}
         onWheel={handleWheel}
-        onContextMenu={(e) => e.preventDefault()}
+        onContextMenu={(e) => e.preventDefault()} // 우클릭 메뉴 방지
       />
       
       {/* 색상 팔레트 */}
